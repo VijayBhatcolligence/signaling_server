@@ -29,7 +29,7 @@
 
             websocket.onmessage = (event) => {
                 const message = JSON.parse(event.data);
-                logMessage(`Received: ${event.data}`); // Log raw message
+                logMessage(`Received: ${event.data}`); // Log raw messageeeeee
 
                 if (message.type === 'sessionCreated') {
                     sessionId = message.sessionId;

@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced WebRTC Multi-User Video Call</title>
+    <link rel="stylesheet" href="cloudflare.css">
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Enhanced WebRTC Multi-User Video Call</h1>
+            <div id="connection-status" class="status-message status-connecting">
+                <i class="fas fa-sync fa-spin"></i> Connecting to signaling server...
+            </div>
+        </header>
+
+        <div class="join-form" id="join-form">
+            <input type="text" id="username" placeholder="Your name" autocomplete="off">
+            <input type="text" id="room-id" placeholder="Room ID" autocomplete="off">
+            <button id="join-btn" disabled><i class="fas fa-video"></i> Join Room</button>
+            <button id="generate-room" type="button"><i class="fas fa-random"></i> Generate Random Room</button>
+        </div>
+
+        <div class="controls hidden" id="controls">
+            <button id="toggle-video" class="toggle-btn"><span class="indicator on"></span> Video</button>
+            <button id="toggle-audio" class="toggle-btn"><span class="indicator on"></span> Audio</button>
+            <button id="share-screen" class="toggle-btn"><i class="fas fa-desktop"></i> Share Screen</button>
+            <button id="leave-btn"><i class="fas fa-phone-slash"></i> Leave Room</button>
+        </div>
+
+        <div class="video-grid" id="video-grid">
+            <!-- Videos will be added here dynamically -->
+        </div>
+
+        <div class="connection-stats hidden" id="connection-stats">
+            <div class="stats-title">
+                Connection Statistics <button class="stats-toggle" id="toggle-stats">Hide Stats</button>
+            </div>
+            <div class="stats-content" id="stats-content">
+                <!-- Stats will be added here dynamically -->
+            </div>
+            <div class="network-info">
+                <div id="network-indicator" class="network-status network-good"></div>
+                <span id="network-quality">Network Quality: Good</span>
+                <div class="tooltip">
+                    <i class="fas fa-info-circle"></i>
+                    <span class="tooltiptext">Based on packet loss, jitter, and round-trip time</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-box">
+            <div id="chatContainer" class="chat-messages"></div>
+            <div class="chat-input-container">
+              <input type="text" id="chatInput" placeholder="Type a message..." />
+              <button id="emojiButton">😀</button>
+              <div id="emojiList" class="emoji-list hidden"></div>
+              <button id="sendButton">Send</button>
+            </div>
+          </div>
+         
+    </div>
+
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script>
+        // Signaling server configuration
+        const SIGNALING_SERVER = 'https://47b1-106-51-84-228.ngrok-free.app';
+       
+        // Cloudflare TURN/STUN configuration
+        const CF_APP_ID = 'd18fb068897e83ea0e04f3c2f3255c38';
+        const CF_API_TOKEN = 'fe480a43d1b455a83f2f7a925e112fe2aa52c8566425c545daeb46d6f904a91f';
+       
+        // ICE server configuration with Cloudflare TURN fallback
+        let ICE_SERVERS = {
+    iceServers: [
+        { urls: "stun:stun.cloudflare.com:3478" },
+        // { urls: "turn:turn.cloudflare.com:3478?transport=udp", username: "d18fb068897e83ea0e04f3c2f3255c38", credential: "fe480a43d1b455a83f2f7a925e112fe2aa52c8566425c545daeb46d6f904a91f" },
+        // { urls: "turn:turn.cloudflare.com:3478?transport=tcp", username: "d18fb068897e83ea0e04f3c2f3255c38", credential: "fe480a43d1b455a83f2f7a925e112fe2aa52c8566425c545daeb46d6f904a91f" },
+        // { urls: "turns:turn.cloudflare.com:5349?transport=tcp", username: "d18fb068897e83ea0e04f3c2f3255c38", credential: "fe480a43d1b455a83f2f7a925e112fe2aa52c8566425c545daeb46d6f904a91f" }
+    ]
+};
+
+
+        // Global variables
+        let socket = null;
+        let socketConnected = false;
+        let localStream;
+        let localScreenStream;
+        let roomId;
+        let username;
+        let peers = {}; // Store all peer connections
+        let statsInterval;
+        let isScreenSharing = false;
+        let mediaConstraints = {
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            },
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user'
+            }
+        };
+
+        // DOM elements
+        const joinForm = document.getElementById('join-form');
+        const controls = document.getElementById('controls');
+        const videoGrid = document.getElementById('video-grid');
+        const usernameInput = document.getElementById('username');
+        const roomIdInput = document.getElementById('room-id');
+        const joinBtn = document.getElementById('join-btn');
+        const generateRoomBtn = document.getElementById('generate-room');
+        const leaveBtn = document.getElementById('leave-btn');
+        const toggleVideoBtn = document.getElementById('toggle-video');
+        const toggleAudioBtn = document.getElementById('toggle-audio');
+        const shareScreenBtn = document.getElementById('share-screen');
+        const connectionStatus = document.getElementById('connection-status');
+        const connectionStats = document.getElementById('connection-stats');
+        const statsContent = document.getElementById('stats-content');
+        const toggleStatsBtn = document.getElementById('toggle-stats');
+        const networkIndicator = document.getElementById('network-indicator');
+        const networkQuality = document.getElementById('network-quality');
+
+        // Initialize Cloudflare TURN configuration
+        async function initCloudflareICEServers() {
+            try {
+                const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_APP_ID}/webrtc`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${CF_API_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+               
+                if (!response.ok) {
+                    throw new Error(`Cloudflare API returned ${response.status}`);
+                }
+               
+                const data = await response.json();
+               
+                if (data.success && data.result && data.result.ice_servers) {
+                    // Add Cloudflare ICE servers to our configuration
+                    ICE_SERVERS.iceServers = [
+                        ...ICE_SERVERS.iceServers,
+                        ...data.result.ice_servers
+                    ];
+                    console.log('Successfully loaded Cloudflare ICE servers');
+                } else {
+                    console.warn('Failed to get Cloudflare ICE servers, using fallback configuration');
+                }
+            } catch (error) {
+                console.error('Error initializing Cloudflare ICE servers:', error);
+                // Continue with fallback STUN servers
+            }
+        }
+
+        // Handle mock Cloudflare API in case of failure
+        function setupFallbackICEServers() {
+            // This is a fallback in case the Cloudflare API call fails
+            const fallbackTurnServers = [
+                {
+                    urls: 'turn:turn.example.com:3478',
+                    username: 'username',
+                    credential: 'password'
+                }
+            ];
+           
+            // We'll still use our original STUN servers
+            return {
+                iceServers: [...ICE_SERVERS.iceServers, ...fallbackTurnServers]
+            };
+        }
+
+        // Connect to signaling server
+        function connectToSignalingServer() {
+            // Show connecting status
+            updateConnectionStatus('connecting', '<i class="fas fa-sync fa-spin"></i> Connecting to signaling server...');
+           
+            // Setup Socket.IO with explicit connection options
+            socket = io(SIGNALING_SERVER, {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                timeout: 10000
+            });
+           
+            // Connection successful
+            socket.on('connect', () => {
+                socketConnected = true;
+                updateConnectionStatus('connected', '<i class="fas fa-check-circle"></i> Connected to signaling server');
+                joinBtn.disabled = false;
+                console.log('Socket connected with ID:', socket.id);
+               
+                // Set up signaling event handlers
+                setupSignalingHandlers();
+            });
+           
+            // Connection lost
+            socket.on('disconnect', () => {
+                socketConnected = false;
+                updateConnectionStatus('error', '<i class="fas fa-exclamation-triangle"></i> Disconnected from signaling server');
+                joinBtn.disabled = true;
+                console.log('Socket disconnected');
+            });
+           
+            // Connection error
+            socket.on('connect_error', (error) => {
+                socketConnected = false;
+                updateConnectionStatus('error', `<i class="fas fa-exclamation-triangle"></i> Connection error: ${error.message}`);
+                joinBtn.disabled = true;
+                console.error('Connection error:', error);
+               
+                // Try to reconnect after 5 seconds
+                setTimeout(() => {
+                    if (!socketConnected) {
+                        console.log('Attempting to reconnect...');
+                        socket.connect();
+                    }
+                }, 5000);
+            });
+        }
+       
+        // Update connection status UI
+        function updateConnectionStatus(status, message) {
+            connectionStatus.innerHTML = message;
+            connectionStatus.className = 'status-message';
+           
+            switch (status) {
+                case 'connecting':
+                    connectionStatus.classList.add('status-connecting');
+                    break;
+                case 'connected':
+                    connectionStatus.classList.add('status-connected');
+                    break;
+                case 'error':
+                    connectionStatus.classList.add('status-error');
+                    break;
+            }
+        }
+
+        // Set up handlers for signaling messages
+        function setupSignalingHandlers() {
+            // When we successfully join a room
+            socket.on('room-joined', async ({ roomId, participants }) => {
+                console.log(`Joined room ${roomId} with ${participants.length} participants`);
+                updateConnectionStatus('connected', `<i class="fas fa-check-circle"></i> Connected to room: ${roomId}`);
+               
+                // Show the connection stats panel
+                connectionStats.classList.remove('hidden');
+               
+                // Create peer connections with each existing participant
+                for (const participant of participants) {
+                    await createPeerConnection(participant.socketId, participant.username, true);
+                }
+               
+                // Start the stats interval
+                startStatsInterval();
+            });
+
+            // When a new user joins the room
+            socket.on('new-user-joined', async (participant) => {
+                console.log(`New user joined: ${participant.username} (${participant.socketId})`);
+                await createPeerConnection(participant.socketId, participant.username, false);
+            });
+
+            // When a user disconnects
+            socket.on('user-disconnected', ({ socketId, username }) => {
+                console.log(`User disconnected: ${username} (${socketId})`);
+                if (peers[socketId]) {
+                    peers[socketId].connection.close();
+                    delete peers[socketId];
+                }
+               
+                // Remove the video element
+                const videoEl = document.getElementById(`video-${socketId}`);
+                if (videoEl) {
+                    videoEl.parentElement.remove();
+                }
+            });
+
+            // Handle incoming offers
+            socket.on('offer', async ({ from, offer }) => {
+                console.log(`Received offer from: ${from}`);
+               
+                const peerConnection = peers[from]?.connection;
+                if (peerConnection) {
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                        const answer = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer);
+                       
+                        socket.emit('answer', {
+                            target: from,
+                            answer: answer
+                        });
+                    } catch (error) {
+                        console.error('Error handling offer:', error);
+                    }
+                }
+            });
+
+            // Handle incoming answers
+            socket.on('answer', async ({ from, answer }) => {
+                console.log(`Received answer from: ${from}`);
+               
+                const peerConnection = peers[from]?.connection;
+                if (peerConnection) {
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                    } catch (error) {
+                        console.error('Error handling answer:', error);
+                    }
+                }
+            });
+
+            // Handle incoming ICE candidates
+            socket.on('ice-candidate', async ({ from, candidate }) => {
+                console.log(`Received ICE candidate from: ${from}`);
+               
+                const peerConnection = peers[from]?.connection;
+                if (peerConnection) {
+                    try {
+                        if (candidate) {
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        }
+                    } catch (error) {
+                        console.error('Error adding ICE candidate:', error);
+                    }
+                }
+            });
+        }
+
+        // Create a peer connection with a remote user
+        async function createPeerConnection(remotePeerId, remoteUsername, isInitiator) {
+            console.log(`Creating ${isInitiator ? 'initiator' : 'receiver'} peer connection with ${remoteUsername}`);
+           
+            // Create a new RTCPeerConnection
+            const peerConnection = new RTCPeerConnection(ICE_SERVERS);
+           
+            // Store the peer connection
+            peers[remotePeerId] = {
+                connection: peerConnection,
+                username: remoteUsername
+            };
+
+            // Add local tracks to the peer connection
+            const currentStream = isScreenSharing ? localScreenStream : localStream;
+            currentStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, currentStream);
+            });
+
+            // Handle ICE candidates
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate && socketConnected) {
+                    socket.emit('ice-candidate', {
+                        target: remotePeerId,
+                        candidate: event.candidate
+                    });
+                }
+            };
+
+            // Handle connection state changes
+            peerConnection.onconnectionstatechange = () => {
+                console.log(`Connection state with ${remoteUsername}: ${peerConnection.connectionState}`);
+               
+                // Update UI based on connection state
+                updatePeerUIState(remotePeerId, peerConnection.connectionState);
+            };
+           
+            // Handle ICE connection state changes
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log(`ICE connection state with ${remoteUsername}: ${peerConnection.iceConnectionState}`);
+               
+                // Handle disconnections and failures
+                if (peerConnection.iceConnectionState === 'disconnected' ||
+                    peerConnection.iceConnectionState === 'failed') {
+                    console.log(`Connection with ${remoteUsername} ${peerConnection.iceConnectionState}`);
+                   
+                    // Attempt to restart ICE if disconnected
+                    if (peerConnection.iceConnectionState === 'disconnected') {
+                        peerConnection.restartIce();
+                    }
+                }
+            };
+
+            // Handle receiving remote tracks
+            peerConnection.ontrack = (event) => {
+                console.log(`Received track from ${remoteUsername}`);
+               
+                // Get the first stream from the event
+                const remoteStream = event.streams[0];
+               
+                // Create or get the video element for this peer
+                let videoContainer = document.getElementById(`container-${remotePeerId}`);
+                let videoElement = document.getElementById(`video-${remotePeerId}`);
+               
+                if (!videoContainer) {
+                    // Create video container
+                    videoContainer = document.createElement('div');
+                    videoContainer.id = `container-${remotePeerId}`;
+                    videoContainer.className = 'video-container';
+                   
+                    // Create video element
+                    videoElement = document.createElement('video');
+                    videoElement.id = `video-${remotePeerId}`;
+                    videoElement.autoplay = true;
+                    videoElement.playsInline = true;
+                   
+                    // Create username display
+                    const usernameDisplay = document.createElement('div');
+                    usernameDisplay.className = 'username';
+                    usernameDisplay.textContent = remoteUsername;
+                   
+                    // Append elements
+                    videoContainer.appendChild(videoElement);
+                    videoContainer.appendChild(usernameDisplay);
+                    videoGrid.appendChild(videoContainer);
+                }
+               
+                // Set the remote stream as the source for the video element
+                videoElement.srcObject = remoteStream;
+            };
+
+            // If we're the initiator, create and send an offer
+            if (isInitiator) {
+                try {
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                   
+                    if (socketConnected) {
+                        socket.emit('offer', {
+                            target: remotePeerId,
+                            offer: offer
+                        });
+                    } else {
+                        console.error('Cannot send offer: Socket not connected');
+                    }
+                } catch (error) {
+                    console.error('Error creating offer:', error);
+                }
+            }
+
+            return peerConnection;
+        }
+
+        // Update UI state for a peer
+        function updatePeerUIState(peerId, state) {
+            const container = document.getElementById(`container-${peerId}`);
+            if (container) {
+                // Remove any existing state classes
+                container.classList.remove('peer-connecting', 'peer-connected', 'peer-disconnected', 'peer-failed');
+               
+                // Add appropriate class based on state
+                switch (state) {
+                    case 'connecting':
+                        container.classList.add('peer-connecting');
+                        break;
+                    case 'connected':
+                        container.classList.add('peer-connected');
+                        break;
+                    case 'disconnected':
+                        container.classList.add('peer-disconnected');
+                        break;
+                    case 'failed':
+                        container.classList.add('peer-failed');
+                        break;
+                }
+            }
+        }
+
+        // Initialize media stream and display local video
+        async function initLocalStream() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+               
+                // Create container for local video
+                const videoContainer = document.createElement('div');
+                videoContainer.className = 'video-container';
+                videoContainer.id = 'local-video-container';
+               
+                // Create local video element
+                const localVideo = document.createElement('video');
+                localVideo.id = 'local-video';
+                localVideo.muted = true; // Mute our own video to avoid feedback
+                localVideo.autoplay = true;
+                localVideo.playsInline = true;
+                localVideo.srcObject = localStream;
+               
+                // Create username display
+                const usernameDisplay = document.createElement('div');
+                usernameDisplay.className = 'username';
+                usernameDisplay.textContent = `${username} (You)`;
+               
+                // Append elements
+                videoContainer.appendChild(localVideo);
+                videoContainer.appendChild(usernameDisplay);
+                videoGrid.appendChild(videoContainer);
+               
+                return true;
+            } catch (error) {
+                console.error('Error accessing media devices:', error);
+                updateConnectionStatus('error', `<i class="fas fa-exclamation-triangle"></i> Media error: ${error.message}`);
+                return false;
+            }
+        }
+
+        // Start screen sharing
+        async function startScreenSharing() {
+            try {
+                // Get screen sharing stream
+                localScreenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        cursor: 'always'
+                    },
+                    audio: false
+                });
+               
+                // Update button state
+                shareScreenBtn.innerHTML = '<i class="fas fa-desktop"></i> Stop Sharing';
+                isScreenSharing = true;
+               
+                // Replace video track in all peer connections
+                const videoTrack = localScreenStream.getVideoTracks()[0];
+               
+                Object.keys(peers).forEach(peerId => {
+                    const connection = peers[peerId].connection;
+                    const senders = connection.getSenders();
+                    const videoSender = senders.find(sender =>
+                        sender.track && sender.track.kind === 'video'
+                    );
+                   
+                    if (videoSender) {
+                        videoSender.replaceTrack(videoTrack);
+                    }
+                });
+               
+                // Update local video
+                const localVideo = document.getElementById('local-video');
+                localVideo.srcObject = localScreenStream;
+               
+                // Listen for the end of screen sharing
+                videoTrack.onended = () => {
+                    stopScreenSharing();
+                };
+               
+            } catch (error) {
+                console.error('Error starting screen sharing:', error);
+                alert(`Could not start screen sharing: ${error.message}`);
+            }
+        }
+
+        // Stop screen sharing
+        function stopScreenSharing() {
+            if (localScreenStream) {
+                // Stop all tracks
+                localScreenStream.getTracks().forEach(track => track.stop());
+               
+                // Replace tracks in peer connections with camera tracks
+                const videoTrack = localStream.getVideoTracks()[0];
+               
+                Object.keys(peers).forEach(peerId => {
+                    const connection = peers[peerId].connection;
+                    const senders = connection.getSenders();
+                    const videoSender = senders.find(sender =>
+                        sender.track && sender.track.kind === 'video'
+                    );
+                   
+                    if (videoSender) {
+                        videoSender.replaceTrack(videoTrack);
+                    }
+                });
+               
+                // Update local video
+                const localVideo = document.getElementById('local-video');
+                localVideo.srcObject = localStream;
+               
+                // Update button state
+                shareScreenBtn.innerHTML = '<i class="fas fa-desktop"></i> Share Screen';
+                isScreenSharing = false;
+            }
+        }
+
+        // Join a room
+        async function joinRoom() {
+            username = usernameInput.value.trim();
+            roomId = roomIdInput.value.trim();
+           
+            if (!username || !roomId) {
+                alert('Please enter your name and a room ID');
+                return;
+            }
+           
+            if (!socketConnected) {
+                updateConnectionStatus('error', '<i class="fas fa-exclamation-triangle"></i> Cannot join room: Not connected to server');
+                alert('Not connected to signaling server. Please wait for connection to establish or refresh the page.');
+                return;
+            }
+           
+            // Initialize local video stream
+            const streamInitialized = await initLocalStream();
+            if (!streamInitialized) return;
+           
+            // Check socket connection again before sending join message
+            if (socketConnected && socket) {
+                // Send join room message to signaling server
+                socket.emit('join-room', { roomId, username });
+               
+                // Update UI
+                joinForm.classList.add('hidden');
+                controls.classList.remove('hidden');
+            } else {
+                updateConnectionStatus('error', '<i class="fas fa-exclamation-triangle"></i> Connection lost while accessing media');
+                alert('Connection to server lost. Please refresh the page.');
+            }
+        }
+
+        // Leave the room
+    function leaveRoom() {
+        if (socketConnected && socket) {
+            // Notify server
+            socket.emit('leave-room', { roomId });
+        }
+       
+        // Close all peer connections
+        Object.keys(peers).forEach(peerId => {
+            peers[peerId].connection.close();
+        });
+        peers = {};
+       
+        // Stop all media tracks
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+       
+        if (localScreenStream) {
+            localScreenStream.getTracks().forEach(track => track.stop());
+        }
+       
+        // Clear the video grid
+        videoGrid.innerHTML = '';
+       
+        // Clear stats interval
+        if (statsInterval) {
+            clearInterval(statsInterval);
+        }
+       
+        // Update UI
+        joinForm.classList.remove('hidden');
+        controls.classList.add('hidden');
+        connectionStats.classList.add('hidden');
+       
+        // Reset form fields for next use
+        usernameInput.value = '';
+        roomIdInput.value = '';
+       
+        updateConnectionStatus('connected', '<i class="fas fa-check-circle"></i> Connected to signaling server');
+    }
+
+    // Toggle video on/off
+    function toggleVideo() {
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            const newState = !videoTrack.enabled;
+            videoTrack.enabled = newState;
+           
+            // Update button UI
+            const indicator = toggleVideoBtn.querySelector('.indicator');
+            indicator.className = `indicator ${newState ? 'on' : 'off'}`;
+            toggleVideoBtn.innerHTML = `<span class="indicator ${newState ? 'on' : 'off'}"></span> Video`;
+        }
+    }
+
+    // Toggle audio on/off
+    function toggleAudio() {
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            const newState = !audioTrack.enabled;
+            audioTrack.enabled = newState;
+           
+            // Update button UI
+            const indicator = toggleAudioBtn.querySelector('.indicator');
+            indicator.className = `indicator ${newState ? 'on' : 'off'}`;
+            toggleAudioBtn.innerHTML = `<span class="indicator ${newState ? 'on' : 'off'}"></span> Audio`;
+        }
+    }
+
+    // Generate random room ID
+    function generateRandomRoomId() {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let result = '';
+        for (let i = 0; i < 8; i++) {
+            result += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        roomIdInput.value = result;
+    }
+
+    // Collect and display connection statistics
+    async function collectConnectionStats() {
+        // Skip if no peers
+        if (Object.keys(peers).length === 0) return;
+       
+        // Get stats from the first peer connection
+        const firstPeerId = Object.keys(peers)[0];
+        const peerConnection = peers[firstPeerId].connection;
+       
+        try {
+            const stats = await peerConnection.getStats();
+            let bitrateSent = 0;
+            let bitrateReceived = 0;
+            let packetLoss = 0;
+            let jitter = 0;
+            let roundTripTime = 0;
+            let statsFound = false;
+           
+            stats.forEach(report => {
+                if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                    const now = report.timestamp;
+                    let bytes = report.bytesSent;
+                    let packets = report.packetsSent;
+                   
+                    if (lastResult && lastResult.has(report.id)) {
+                        const lastReport = lastResult.get(report.id);
+                        const timeDiff = now - lastReport.timestamp;
+                       
+                        if (timeDiff > 0 && bytes > lastReport.bytesSent) {
+                            bitrateSent = 8 * (bytes - lastReport.bytesSent) / timeDiff / 1000;
+                        }
+                       
+                        if (report.packetsLost && lastReport.packetsLost) {
+                            const packetsDiff = packets - lastReport.packetsSent;
+                            const packetsLostDiff = report.packetsLost - lastReport.packetsLost;
+                           
+                            if (packetsDiff > 0) {
+                                packetLoss = (packetsLostDiff / packetsDiff) * 100;
+                            }
+                        }
+                    }
+                   
+                    statsFound = true;
+                }
+               
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                    const now = report.timestamp;
+                    let bytes = report.bytesReceived;
+                   
+                    if (report.jitter) {
+                        jitter = report.jitter * 1000; // Convert to ms
+                    }
+                   
+                    if (lastResult && lastResult.has(report.id)) {
+                        const lastReport = lastResult.get(report.id);
+                        const timeDiff = now - lastReport.timestamp;
+                       
+                        if (timeDiff > 0 && bytes > lastReport.bytesReceived) {
+                            bitrateReceived = 8 * (bytes - lastReport.bytesReceived) / timeDiff / 1000;
+                        }
+                    }
+                   
+                    statsFound = true;
+                }
+               
+                if (report.type === 'remote-candidate') {
+                    roundTripTime = report.roundTripTime * 1000 || 0; // Convert to ms
+                }
+            });
+           
+            if (statsFound) {
+                updateStatsDisplay({
+                    bitrateSent,
+                    bitrateReceived,
+                    packetLoss,
+                    jitter,
+                    roundTripTime
+                });
+               
+                updateNetworkQualityIndicator(packetLoss, jitter, roundTripTime);
+            }
+           
+            // Save the current result for the next comparison
+            lastResult = stats;
+           
+        } catch (error) {
+            console.error('Error collecting stats:', error);
+        }
+    }
+
+    // Store the last result for bitrate calculation
+    let lastResult = null;
+
+    // Start stats collection interval
+    function startStatsInterval() {
+        if (statsInterval) {
+            clearInterval(statsInterval);
+        }
+       
+        statsInterval = setInterval(collectConnectionStats, 1000);
+    }
+
+    // Update stats display
+    function updateStatsDisplay(stats) {
+        statsContent.innerHTML = `
+            <div class="stats-item">
+                <div class="stats-label">Upload</div>
+                <div class="stats-value">${stats.bitrateSent.toFixed(2)} Kbps</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Download</div>
+                <div class="stats-value">${stats.bitrateReceived.toFixed(2)} Kbps</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Packet Loss</div>
+                <div class="stats-value">${stats.packetLoss.toFixed(2)}%</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Jitter</div>
+                <div class="stats-value">${stats.jitter.toFixed(2)} ms</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Round Trip Time</div>
+                <div class="stats-value">${stats.roundTripTime.toFixed(2)} ms</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Connected Peers</div>
+                <div class="stats-value">${Object.keys(peers).length}</div>
+            </div>
+        `;
+    }
+
+    // Update network quality indicator
+    function updateNetworkQualityIndicator(packetLoss, jitter, rtt) {
+        let quality = 'good';
+        let qualityText = 'Good';
+       
+        // Determine quality based on thresholds
+        if (packetLoss > 5 || jitter > 50 || rtt > 300) {
+            quality = 'poor';
+            qualityText = 'Poor';
+        } else if (packetLoss > 1 || jitter > 30 || rtt > 150) {
+            quality = 'medium';
+            qualityText = 'Fair';
+        }
+       
+        // Update UI
+        networkIndicator.className = `network-status network-${quality}`;
+        networkQuality.textContent = `Network Quality: ${qualityText}`;
+    }
+
+    // Toggle stats visibility
+    function toggleStatsVisibility() {
+        const content = document.getElementById('stats-content');
+        const networkInfo = document.querySelector('.network-info');
+       
+        if (content.style.display === 'none') {
+            content.style.display = 'grid';
+            networkInfo.style.display = 'flex';
+            toggleStatsBtn.textContent = 'Hide Stats';
+        } else {
+            content.style.display = 'none';
+            networkInfo.style.display = 'none';
+            toggleStatsBtn.textContent = 'Show Stats';
+        }
+    }
+    // Chat functionality
+    document.addEventListener("DOMContentLoaded", () => {
+        const joinForm = document.getElementById("join-form");
+        const chatBox = document.querySelector(".chat-box");
+        const chatContainer = document.getElementById("chatContainer");
+        const chatInput = document.getElementById("chatInput");
+        const sendButton = document.getElementById("sendButton");
+        const emojiButton = document.getElementById("emojiButton");
+        const emojiList = document.getElementById("emojiList");
+     
+        const emojis = ["😀", "😂", "❤️", "👍", "😢", "🔥", "👏", "🤔", "🎉", "🤩"];
+     
+        // Initially hide the chat
+        chatBox.style.display = "none";
+     
+        // When user joins the room, show the chat
+        document.getElementById("join-btn").addEventListener("click", () => {
+          chatBox.style.display = "block"; // Show chat after joining room
+        });
+     
+        // Sending message
+        sendButton.addEventListener("click", sendMessage);
+        chatInput.addEventListener("keypress", (e) => {
+          if (e.key === "Enter") sendMessage();
+        });
+     
+        function sendMessage() {
+          const message = chatInput.value.trim();
+          if (message !== "") {
+            addMessage("You", message);
+            chatInput.value = "";
+          }
+        }
+     
+        function addMessage(user, message) {
+          const msgElement = document.createElement("div");
+          msgElement.classList.add("message");
+          msgElement.innerHTML = `<strong>${user}:</strong> ${message}`;
+          chatContainer.appendChild(msgElement);
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+     
+        // Emoji functionality
+        emojiButton.addEventListener("click", () => {
+          emojiList.classList.toggle("hidden");
+        });
+     
+        emojis.forEach((emoji) => {
+          const emojiBtn = document.createElement("button");
+          emojiBtn.innerHTML = emoji;
+          emojiBtn.classList.add("emoji-btn");
+          emojiBtn.onclick = () => {
+            chatInput.value += emoji;
+            chatInput.focus();
+          };
+          emojiList.appendChild(emojiBtn);
+        });
+      });
+     
+ 
+    // Initialize the application
+    async function init() {
+        try {
+            // Initialize Cloudflare ICE servers or use fallback
+            await initCloudflareICEServers().catch(error => {
+                console.warn('Failed to initialize Cloudflare ICE servers, using fallback:', error);
+                ICE_SERVERS = setupFallbackICEServers();
+            });
+           
+            // Connect to signaling server
+            connectToSignalingServer();
+           
+            // Set up event listeners for UI controls
+            joinBtn.addEventListener('click', joinRoom);
+            generateRoomBtn.addEventListener('click', generateRandomRoomId);
+            leaveBtn.addEventListener('click', leaveRoom);
+            toggleVideoBtn.addEventListener('click', toggleVideo);
+            toggleAudioBtn.addEventListener('click', toggleAudio);
+            shareScreenBtn.addEventListener('click', () => {
+                if (isScreenSharing) {
+                    stopScreenSharing();
+                } else {
+                    startScreenSharing();
+                }
+            });
+            toggleStatsBtn.addEventListener('click', toggleStatsVisibility);
+           
+            // Enable join button once the page is loaded
+            window.addEventListener('load', () => {
+                if (socketConnected) {
+                    joinBtn.disabled = false;
+                }
+            });
+           
+        } catch (error) {
+            console.error('Initialization error:', error);
+            updateConnectionStatus('error', `<i class="fas fa-exclamation-triangle"></i> Initialization error: ${error.message}`);
+        }
+    }
+
+    // Start the application
+    init();
+</script>
+</body>
+</html>

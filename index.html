@@ -1,33 +1,108 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebRTC Video Chat</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            margin: 20px;
-        }
-        video {
-            width: 50%;
-            border: 2px solid black;
-            border-radius: 10px;
-            margin: 10px;
-        }
-        button {
-            padding: 10px 15px;
-            font-size: 16px;
-            margin-top: 10px;
-        }
-    </style>
+    <title>Cloudflare WebRTC Test</title>
 </head>
 <body>
-    <h1>WebRTC Video Call</h1>
-    <video id="localVideo" autoplay playsinline></video>
-    <br>
-    <button id="startCall">Start Call</button>
-    <script src="script.js"></script>
+    <h1>Cloudflare WebRTC Test</h1>
+    <button id="getSdpBtn">Generate Local SDP</button><br>
+    <textarea id="localSdp" placeholder="Local SDP will appear here" rows="10" cols="50"></textarea><br>
+
+    <h2>Local Video</h2>
+    <video id="localVideo" autoplay muted playsinline></video>
+
+    <h2>Remote Video</h2>
+    <div id="remoteVideos"></div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:3000'); // Replace if needed
+        let clientId;
+        let peerConnection;
+        let sessionId;
+        const ROOM_ID = "default-room";
+
+        ws.addEventListener('open', () => {
+            clientId = generateClientId();
+            console.log('[WebSocket] Connected ✅');
+            console.log('[WebSocket] Client ID:', clientId);
+        });
+
+        ws.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            console.log('[WebSocket] Message Received:', message);
+
+            if (message.type === 'sessionCreated') {
+                sessionId = message.sessionId;
+                console.log('[API Response] Cloudflare Session Created:', sessionId);
+            } else if (message.type === 'trackAdded') {
+                console.log('[API Response] Track Successfully Added:', message.response);
+            } else if (message.type === 'remoteClientConnected') {
+                console.log('[WebSocket] Remote Client Connected:', message.clientId);
+            } else if (message.type === 'error') {
+                console.error('[API Error] Error Received:', message.message);
+            }
+        });
+
+        ws.addEventListener('close', () => {
+            console.log('[WebSocket] Connection Closed ❌');
+        });
+
+        ws.addEventListener('error', (error) => {
+            console.error('[WebSocket] Connection Error:', error);
+        });
+
+        document.getElementById('getSdpBtn').addEventListener('click', async () => {
+            try {
+                console.log('[Media] Requesting User Media...');
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                document.getElementById('localVideo').srcObject = stream;
+                console.log('[Media] User Media Granted ✅', stream);
+
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{
+                        urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
+                    }],
+                });
+
+                console.log('[WebRTC] PeerConnection Created ✅');
+
+                peerConnection.ontrack = (event) => {
+                    console.log('[WebRTC] ontrack Event:', event);
+                };
+
+                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+                console.log('[WebRTC] Tracks Added to PeerConnection ✅');
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                console.log('[WebRTC] SDP Offer Created ✅');
+
+                const localSdp = peerConnection.localDescription.sdp;
+                document.getElementById('localSdp').value = localSdp;
+                console.log('[WebRTC] Local SDP Set ✅');
+
+                const trackData = {
+                    sessionDescription: { type: "offer", sdp: localSdp },
+                    tracks: [{ location: "local", mid: "0", trackName: `local-track-${Date.now()}` }]
+                };
+
+                console.log('[WebSocket] Sending joinCall Request:', trackData);
+                ws.send(JSON.stringify({
+                    type: 'joinCall',
+                    clientId: clientId,
+                    trackData: trackData,
+                    roomId: ROOM_ID
+                }));
+                console.log('[WebSocket] joinCall Request Sent ✅');
+
+            } catch (error) {
+                console.error('[Error] Failed to Generate SDP:', error);
+            }
+        });
+
+        function generateClientId() {
+            return Math.random().toString(36).substring(2, 15);
+        }
+    </script>
 </body>
 </html>

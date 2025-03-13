@@ -57,6 +57,7 @@
       // which is defined towards the bottom of this script. This will create an
       // a Calls session, and return the session ID.
       const localSessionId = await createCallsSession();
+      console.log("Local Session ID:", localSessionId); // Log session id
 
       // Then we create a simple RTCPeerConnection with some standard parameters.
       const localPeerConnection = await createPeerConnection();
@@ -94,6 +95,8 @@
           }),
         },
       ).then((res) => res.json());
+
+      console.log("Tracks Added Response:", pushTracksResponse); // Log track add information
 
       // Setting up the ICE connection state handler needs to happen before
       // setting the remote description to avoid race conditions.

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cloudflare Calls API Client</title>
+</head>
+<body>
+    <h1>Cloudflare Calls API Client</h1>
+
+    <div>
+        <button id="joinCallBtn">Join Call</button>
+        <button id="addTrackBtn">Add Track</button>
+    </div>
+
+    <div>
+        <label for="sessionId">Session ID:</label>
+        <input type="text" id="sessionId" readonly>
+    </div>
+
+    <div>
+        <label for="trackName">Track Name:</label>
+        <input type="text" id="trackName" value="my-audio-track">
+    </div>
+
+    <div>
+        <label for="trackMid">Track MID:</label>
+        <input type="text" id="trackMid" value="0">
+    </div>
+
+    <div>
+        <label for="sdpOffer">SDP Offer (Local Track):</label>
+        <textarea id="sdpOffer" rows="4" cols="50">
+v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=-
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 4000 RTP/AVP 111
+a=rtpmap:111 OPUS/48000/2
+        </textarea>
+    </div>
+
+    <div>
+        <label for="remoteSessionId">Remote Session ID (Remote Track):</label>
+        <input type="text" id="remoteSessionId">
+    </div>
+    <div>
+        <label for="remoteTrackName">Remote Track Name (Remote Track):</label>
+        <input type="text" id="remoteTrackName" value="remote-audio-track">
+    </div>
+
+    <div id="messages"></div>
+
+    <script>
+        const joinCallBtn = document.getElementById('joinCallBtn');
+        const addTrackBtn = document.getElementById('addTrackBtn');
+        const sessionIdInput = document.getElementById('sessionId');
+        const trackNameInput = document.getElementById('trackName');
+        const trackMidInput = document.getElementById('trackMid');
+        const sdpOfferTextarea = document.getElementById('sdpOffer');
+        const messagesDiv = document.getElementById('messages');
+        const remoteSessionIdInput = document.getElementById('remoteSessionId');
+        const remoteTrackNameInput = document.getElementById('remoteTrackName');
+
+        const websocket = new WebSocket('ws://localhost:3000'); // Replace with your server URL
+
+        websocket.onopen = () => {
+            logMessage('WebSocket connected');
+        };
+
+        websocket.onmessage = event => {
+            const message = JSON.parse(event.data);
+            logMessage('Received: ' + JSON.stringify(message));
+
+            if (message.type === 'sessionCreated') {
+                sessionIdInput.value = message.sessionId;
+            }
+            if (message.type === 'trackAdded') {
+                logMessage('Track added successfully: ' + JSON.stringify(message.trackResponse));
+            }
+
+            if (message.type === 'error') {
+                logMessage('Error: ' + message.message);
+            }
+        };
+
+        websocket.onclose = () => {
+            logMessage('WebSocket disconnected');
+        };
+
+        websocket.onerror = error => {
+            logMessage('WebSocket error: ' + error);
+        };
+
+        joinCallBtn.addEventListener('click', () => {
+            websocket.send(JSON.stringify({ type: 'joinCall' }));
+        });
+
+        addTrackBtn.addEventListener('click', () => {
+            const sessionId = sessionIdInput.value;
+            const trackName = trackNameInput.value;
+            const trackMid = trackMidInput.value;
+            const sdpOffer = sdpOfferTextarea.value;
+            const remoteSessionId = remoteSessionIdInput.value;
+            const remoteTrackName = remoteTrackNameInput.value;
+
+            if (!sessionId) {
+                logMessage('Error: Session ID is required.');
+                return;
+            }
+
+            let trackData;
+
+            //Example for local track
+            if (sdpOffer) {
+                trackData = {
+                    sessionDescription: {
+                        sdp: sdpOffer,
+                        type: 'offer'
+                    },
+                    tracks: [
+                        {
+                            location: 'local',
+                            mid: trackMid,
+                            trackName: trackName
+                        }
+                    ]
+                };
+              }
+            //Example for remote track
+            else if (remoteSessionId && remoteTrackName)
+            {
+                trackData = {
+                    tracks: [
+                        {
+                            location: 'remote',
+                            sessionId: remoteSessionId,
+                            trackName: remoteTrackName
+                        }
+                    ]
+                };
+            } else {
+                logMessage('Error: Either SDP Offer or Remote Session ID with Track Name must be specified.');
+                return;
+            }
+
+
+            websocket.send(JSON.stringify({ type: 'addTrack', sessionId: sessionId, trackData: trackData }));
+        });
+
+        function logMessage(message) {
+            const p = document.createElement('p');
+            p.textContent = message;
+            messagesDiv.appendChild(p);
+        }
+    </script>
+</body>
+</html>

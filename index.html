@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Video Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 20px;
+        }
+        video {
+            width: 50%;
+            border: 2px solid black;
+            border-radius: 10px;
+            margin: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Video Call</h1>
+    <video id="localVideo" autoplay playsinline></video>
+    <br>
+    <button id="startCall">Start Call</button>
+    <script src="script.js"></script>
+</body>
+</html>

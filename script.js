@@ -1,67 +1,189 @@
-const ws = new WebSocket("ws://localhost:3000");
+const https = require('https');
+const WebSocket = require('ws');
 
-ws.onopen = async () => {
-    console.log("🔗 WebSocket Connected");
+const wss = new WebSocket.Server({
+    port: 3000
+});
 
-    // Send WebRTC offer once connected
-    const payload = await createWebRTCOffer();
-    ws.send(JSON.stringify({ type: "webrtcOffer", ...payload }));
-};
+const APP_ID = "9eb4e5f9905845ff1bfaf39ad5fdf622"; // Replace with your Cloudflare App ID
+const APP_TOKEN = "8868573252ae977abc3fbbc421f8ae2c41b2c880ce38e988e367f8f10afeb9d4"; // Replace with your Cloudflare App Token
+const API_BASE = `https://rtc.live.cloudflare.com/v1/apps/${APP_ID}`;
 
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    console.log("📩 Server Response:", data);
+// Store clients by room ID
+const rooms = {};
 
-    if (data.type === "error") {
-        console.error("❌ Server Error:", data.message);
-    } else if (data.type === "sessionCreated") {
-        console.log(`✅ Session Created: ${data.sessionId}`);
-    } else if (data.type === "trackCreated") {
-        console.log(`🎥 Track Created: ${data.trackId} (${data.kind})`);
-    }
-};
+function createCloudflareSession() {
+    return new Promise((resolve, reject) => {
+        const options = {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${APP_TOKEN}`,
+            },
+        };
 
-ws.onerror = (error) => {
-    console.error("❌ WebSocket Error:", error);
-};
+        console.log(`[Server] 📞 Calling Cloudflare API: POST ${API_BASE}/sessions/new`);
 
-ws.onclose = () => {
-    console.log("🔴 WebSocket Disconnected");
-};
+        const req = https.request(`${API_BASE}/sessions/new`, options, (res) => {
+            let data = '';
 
-// Function to create WebRTC offer
-async function createWebRTCOffer() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
 
-        const pc = new RTCPeerConnection();
-        const tracksInfo = [];
-
-        stream.getTracks().forEach((track, index) => {
-            pc.addTrack(track, stream);
-            console.log(`✅ Track added: ${track.kind}`);
-
-            tracksInfo.push({
-                location: "local",
-                mid: index.toString(),
-                trackName: crypto.randomUUID()
+            res.on('end', () => {
+                try {
+                    const parsedData = JSON.parse(data);
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        const sessionId = parsedData.sessionId;
+                        console.log(`[Server] ✅ Cloudflare API: Session created successfully with ID: ${sessionId}`);
+                        resolve(sessionId);
+                    } else {
+                        console.error(`[Server] ❌ Cloudflare API: Session creation failed with status ${res.statusCode}`);
+                        console.error(`[Server] ❌ Error description: ${parsedData.errorDescription}`);
+                        reject(new Error(`Session creation failed with status ${res.statusCode}: ${parsedData.errorDescription}`));
+                    }
+                } catch (parseError) {
+                    console.error("[Server] ❌ JSON Parsing Error:", parseError.message);
+                    reject(new Error(`Error parsing JSON response: ${parseError.message}`));
+                }
             });
         });
 
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+        req.on('error', (error) => {
+            console.error("[Server] ⚠️ Request Error:", error);
+            reject(error);
+        });
 
-        const payload = {
-            sessionDescription: {
-                sdp: offer.sdp,
-                type: offer.type
+        req.end();
+    });
+}
+
+function addTrackToCloudflareSession(sessionId, trackData) {
+    return new Promise((resolve, reject) => {
+        const options = {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${APP_TOKEN}`,
+                'Content-Type': 'application/json',
             },
-            tracks: tracksInfo
         };
 
-        console.log("📩 Payload Sent:", JSON.stringify(payload, null, 2));
-        return payload;
-    } catch (error) {
-        console.error("❌ Error creating WebRTC offer:", error);
-    }
+        const requestBody = JSON.stringify(trackData);
+
+        console.log(`[Server] 📞 Calling Cloudflare API: POST ${API_BASE}/sessions/${sessionId}/tracks/new`);
+        console.log(`[Server] 📤 Request Body (addTrack): trackName: ${trackData.tracks[0].trackName}, mid: ${trackData.tracks[0].mid}`);
+
+        const req = https.request(`${API_BASE}/sessions/${sessionId}/tracks/new`, options, (res) => {
+            let data = '';
+
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const parsedData = JSON.parse(data);
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        console.log(`[Server] ✅ Cloudflare API: Track added successfully: ${parsedData.tracks[0].trackName}`);
+                        resolve(parsedData);
+                    } else {
+                        console.error(`[Server] ❌ Cloudflare API: Adding track failed with status ${res.statusCode}`);
+                        console.error(`[Server] ❌ Error description: ${parsedData.errorDescription}`);
+                        reject(new Error(`Adding track failed with status ${res.statusCode}: ${parsedData.errorDescription}`));
+                    }
+                } catch (parseError) {
+                    console.error("[Server] ❌ JSON Parsing Error:", parseError.message);
+                    reject(new Error(`Error parsing JSON response: ${parseError.message}`));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            console.error("[Server] ⚠️ Request Error:", error);
+            reject(error);
+        });
+
+        req.write(requestBody);
+        req.end();
+    });
 }
+
+wss.on('connection', ws => {
+    let clientId;
+    let sessionId;
+    let roomId; // Keep track of the room
+
+    ws.on('message', async message => {
+        console.log(`[Server] Received message:`, message);
+        const parsedMessage = JSON.parse(message);
+
+        if (parsedMessage.type === 'joinCall') {
+            clientId = parsedMessage.clientId;
+            roomId = parsedMessage.roomId || "default-room"; // Use default room if none provided
+
+            console.log(`[Server] Client ${clientId} attempting to join room ${roomId}`);
+
+            try {
+                sessionId = await createCloudflareSession();
+                const trackData = parsedMessage.trackData;
+
+                // Add client to the room
+                if (!rooms[roomId]) {
+                    rooms[roomId] = {};
+                }
+                rooms[roomId][clientId] = {
+                    ws,
+                    sessionId
+                };
+
+                console.log(`[Server] Client ${clientId} joined room ${roomId} with session ${sessionId}`);
+
+                try {
+                    const addTrackResponse = await addTrackToCloudflareSession(sessionId, trackData);
+                    ws.send(JSON.stringify({
+                        type: 'trackAdded',
+                        response: addTrackResponse,
+                        sessionId: sessionId
+                    }));
+
+                    // Notify other clients in the room about the new client
+                    for (const remoteClientId in rooms[roomId]) {
+                        if (remoteClientId !== clientId) {
+                            ws.send(JSON.stringify({
+                                type: 'remoteClientConnected',
+                                clientId: clientId
+                            }));
+                            console.log(`[Server] 📢 Notifying client ${remoteClientId} about new client ${clientId}`);
+                        }
+                    }
+
+                } catch (trackError) {
+                    console.error(`[Server] Error adding track for ${clientId}:`, trackError);
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: trackError.message
+                    }));
+                }
+
+            } catch (sessionError) {
+                console.error(`[Server] Error creating session for ${clientId}:`, sessionError);
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    message: sessionError.message
+                }));
+            }
+        }
+    });
+
+    ws.on('close', () => {
+        if (clientId && roomId && rooms[roomId] && rooms[roomId][clientId]) {
+            delete rooms[roomId][clientId];
+            console.log(`[Server] Client ${clientId} left room ${roomId}`);
+        }
+    });
+    ws.on('error', (error) => {
+        console.error("[Server] WebSocket error:", error);
+    });
+});
+
+console.log('🚀 WebSocket server started on port 3000');

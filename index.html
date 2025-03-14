@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cloudflare WebRTC Test</title>
+</head>
+<body>
+    <h1>Cloudflare WebRTC Test</h1>
+    <button id="getSdpBtn">Generate Local SDP</button><br>
+    <textarea id="localSdp" placeholder="Local SDP will appear here" rows="10" cols="50"></textarea><br>
+
+    <h2>Local Video</h2>
+    <video id="localVideo" autoplay muted playsinline></video>
+
+    <h2>Remote Video</h2>
+    <div id="remoteVideos"></div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:3000');
+        let clientId;
+        let peerConnection;
+        let sessionId; // Store the Cloudflare session ID
+        const ROOM_ID = "default-room"; // Added Default Room
+
+        ws.addEventListener('open', () => {
+            console.log('WebSocket connected');
+            clientId = generateClientId();
+            console.log(`[Client] ✅ WebSocket Connection opened. Client ID: ${clientId}`);
+        });
+
+        ws.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            console.log(`[Client] ⬇️ Received message (Type: ${message.type}) from Server:`, message);
+
+            if (message.type === 'sessionCreated') {
+                sessionId = message.sessionId; // Store the session ID
+                console.log(`[Client] 🔑 Cloudflare session created. Session ID: ${sessionId}`);
+            } else if (message.type === 'trackAdded') {
+                console.log(`[Client] ✅ Audio track added successfully! Response:`, message.response);
+            } else if (message.type === 'remoteClientConnected') {
+                console.log(`[Client] 🧑‍🤝‍🧑 Remote client connected. Client ID: ${message.clientId}`);
+            } else if (message.type === 'error') {
+                console.error(`[Client] ❌ Error from Server: ${message.message}`);
+            }
+        });
+
+        ws.addEventListener('close', () => {
+            console.log(`[Client] 🚪 WebSocket connection closed`);
+        });
+
+        ws.addEventListener('error', (error) => {
+            console.error(`[Client] ❌ WebSocket error:`, error);
+        });
+
+        document.getElementById('getSdpBtn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: true,
+                    video: true
+                });
+                document.getElementById('localVideo').srcObject = stream;
+
+                console.log(`[Client] 🎥 getUserMedia succeeded. Local stream active.`);
+                console.log(`[Client] 🔊 Number of tracks in stream: ${stream.getTracks().length}`);
+
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{
+                        urls: [
+                            'stun:stun.l.google.com:19302',
+                            'stun:stun1.l.google.com:19302',
+                        ],
+                    }, ],
+                });
+                peerConnection.ontrack = (event) => {
+                    console.log(`[Client] ✅✅✅ ontrack event fired!`);
+                    console.log(`[Client] 🎬 Tracks in ontrack event:`, event.tracks);
+                    console.log(`[Client] 🌊 Streams in ontrack event:`, event.streams);
+                };
+                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                const localSdp = peerConnection.localDescription.sdp;
+                const audioMid = "0";
+
+                const trackData = {
+                    sessionDescription: { // Explicitly include sessionDescription
+                        type: "offer",
+                        sdp: localSdp
+                    },
+                    tracks: [{
+                        location: "local",
+                        mid: audioMid,
+                        trackName: `local-audio-track-${Date.now()}`
+                    }]
+                };
+                const joinCallMessage = {
+                    type: 'joinCall',
+                    clientId: clientId,
+                    trackData: trackData,
+                    roomId: ROOM_ID // Send the room ID
+                };
+                console.log(`[Client] ⬆️ Sending joinCall message to Server:`, joinCallMessage);
+                ws.send(JSON.stringify(joinCallMessage));
+                console.log(`[Client] ⬆️ Join call message sent`);
+
+            } catch (error) {
+                console.error(`[Client] ❌ Error generating SDP:`, error);
+                console.error(`[Client] ❌ getUserMedia error:`, error);
+            }
+        });
+
+        function generateClientId() {
+            return Math.random().toString(36).substring(2, 15);
+        }
+    </script>
+</body>
+
+</html>

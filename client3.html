@@ -46,7 +46,11 @@
                 console.log(`[Client] 🔑 Cloudflare session created: ${sessionId}, Track: ${trackId}`);
 
             } else if (message.type === 'remoteClientConnected') {
-                handleRemoteClient(message);
+                const remoteClientId = message.clientId;
+                const remoteSessionId = message.sessionId;
+                const remoteTrackData = message.trackData;
+                console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track: ${remoteTrackData.tracks[0].trackName}`);
+                await addRemoteTrack(remoteClientId, remoteSessionId, remoteTrackData);
             } else if (message.type === 'error') {
                 console.error(`[Client] ❌ Server Error: ${message.message}`);
             }
@@ -61,6 +65,17 @@
                 const peerConnection = new RTCPeerConnection({
                     iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
                 });
+
+                peerConnection.ontrack = (event) => {
+                const remoteClientId = event.target.remoteClientId
+                    console.log(`[Client] ✅✅✅ ontrack event fired! for ${remoteClientId}`);
+                    console.log(`[Client] 🎬 Tracks in ontrack event:`, event.tracks);
+                    console.log(`[Client] 🌊 Streams in ontrack event:`, event.streams);
+                    const remoteVideo = document.getElementById(`video-${remoteClientId}`);
+                    if (event.streams.length > 0) {
+                        remoteVideo.srcObject = event.streams[0];
+                    }
+                };
 
                 stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
 
@@ -83,38 +98,32 @@
                 console.error(`[Client] ❌ Error:`, error);
             }
         }
-
-        function handleRemoteClient(message) {
-            const remoteClientId = message.clientId;
-            const remoteSessionId = message.sessionId;
-            const TrackName = message.trackData.tracks[0].trackName;
-            
-
-            console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId} , TrackName : ${TrackName} `);
-    
-            if (!peerConnections[remoteClientId]) {
-                const remoteVideo = document.createElement('video');
-                remoteVideo.id = `video-${remoteClientId}`;
-                remoteVideo.autoplay = true;
-                remoteVideo.playsInline = true;
-                document.getElementById('remoteVideos').appendChild(remoteVideo);
-
-                const peerConnection = new RTCPeerConnection({
-                    iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-                });
-
-                peerConnection.ontrack = (event) => {
-                    if (event.streams.length > 0) {
-                        remoteVideo.srcObject = event.streams[0];
-                    }
-                };
-
-                peerConnections[remoteClientId] = peerConnection;
-            }
+        // Helper function to add remote video to UI
+        function createRemoteVideoElement(remoteClientId) {
+            const remoteVideo = document.createElement('video');
+            remoteVideo.id = `video-${remoteClientId}`;
+            remoteVideo.autoplay = true;
+            remoteVideo.playsInline = true;
+            document.getElementById('remoteVideos').appendChild(remoteVideo);
+            return remoteVideo;
         }
-
+        // Helper function to generate a random client ID
         function generateClientId() {
             return Math.random().toString(36).substring(2, 15);
+        }
+        // Function to add a remote track to the PeerConnection
+        async function addRemoteTrack(remoteClientId, remoteSessionId, remoteTrackData) {
+            console.log(`[Client] Adding remote track: ${remoteTrackData.tracks[0].trackName} from remoteClientId: ${remoteClientId} and session id ${remoteSessionId}`);
+            const trackData = {
+                tracks: [{
+                    location: "remote",
+                    sessionId: remoteSessionId,
+                    trackName: remoteTrackData.tracks[0].trackName
+                }]
+            };
+            // set the remote client id to the peer connection so that the onTrack can use it
+            peerConnections[remoteClientId] = peerConnection
+            peerConnection.remoteClientId = remoteClientId
         }
     </script>
 </body>

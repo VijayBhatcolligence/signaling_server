@@ -1,158 +1,106 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-    <title>Cloudflare WebRTC Test</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Multi-User Video Call</title>
 </head>
-
 <body>
-    <h1>Cloudflare WebRTC Test</h1>
-
-    <h2>Local Video</h2>
-    <video id="localVideo" autoplay muted playsinline></video>
-    <p>Client ID: <span id="localClientId"></span></p>
-    <p>Session ID: <span id="localSessionId"></span></p>
-    <p>Track ID: <span id="localTrackId"></span></p>
-
-    <h2>Remote Video</h2>
-    <div id="remoteVideo" autoplay playsinline></div>
-    <p>Remote Client ID: <span id="remoteClientId"></span></p>
-    <p>Remote Session ID: <span id="remoteSessionId"></span></p>
-    <p>Remote Track ID: <span id="remoteTrackId"></span></p>
+    <h1>Multi-User Video Chat</h1>
+    <video id="localVideo" autoplay playsinline></video>
+    <div id="remoteVideos"></div>
 
     <script>
         const ws = new WebSocket('ws://localhost:3000');
-        let clientId;
-        let peerConnection;
-        let sessionId; // Store the Cloudflare session ID
-        let trackId;
-        const ROOM_ID = "default-room"; // Added Default Room
+        const localVideo = document.getElementById("localVideo");
+        const remoteVideos = document.getElementById("remoteVideos");
+        const roomId = "test-room";
+        const clientId = Math.random().toString(36).substring(2, 8);
+        let peerConnections = {};
+        let localStream;
 
-        ws.addEventListener('open', () => {
-            console.log('WebSocket connected');
-            clientId = generateClientId();
-            document.getElementById('localClientId').textContent = clientId;
-            console.log(`[Client] ✅ WebSocket Connection opened. Client ID: ${clientId}`);
-            startWebRTC();
-        });
+        // Get user media
+        async function getLocalStream() {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
+        }
 
-        ws.addEventListener('message', async (event) => {
+        ws.onopen = () => {
+            console.log("[WebSocket] Connected");
+            ws.send(JSON.stringify({ type: "joinCall", clientId, roomId }));
+        };
+
+        ws.onmessage = async (event) => {
             const message = JSON.parse(event.data);
-            console.log(`[Client] ⬇️ Received message (Type: ${message.type}) from Server:`, message);
+            console.log("[WebSocket] Message:", message);
 
-            if (message.type === 'trackAdded') {
-                sessionId = message.sessionId; // Store the session ID
-                document.getElementById('localSessionId').textContent = sessionId;
-                console.log(`[Client] 🔑 Cloudflare session created. Session ID: ${sessionId}`);
-            }  if (message.type === 'trackAdded') {
-                console.log(`[Client] ✅ Audio track added successfully! Response:`, message.response);
-                trackId = message.response.tracks[0].trackName;
-                document.getElementById('localTrackId').textContent = trackId;
-            } else if (message.type === 'remoteClientConnected') {
-                const remoteClientId = message.clientId;
-                const remoteSessionId = message.sessionId;
-                const remoteTrackData = message.trackData;
-
-                document.getElementById('remoteClientId').textContent = remoteClientId;
-                document.getElementById('remoteSessionId').textContent = remoteSessionId;
-                 document.getElementById('remoteTrackId').textContent = remoteTrackData.tracks[0].trackName;
-
-                console.log(`[Client] 🧑‍🤝‍🧑 Remote client connected: ${remoteClientId}`);
-                console.log(`[Client] 🔑 Remote client session ID: ${remoteSessionId}`);
-                console.log(`[Client] 🎵 Remote client track data:`, remoteTrackData);
-            } else if (message.type === 'error') {
-                console.error(`[Client] ❌ Error from Server: ${message.message}`);
+            if (message.type === 'remoteClientConnected') {
+                setupPeerConnection(message.clientId);
             }
-        });
 
-        ws.addEventListener('close', () => {
-            console.log(`[Client] 🚪 WebSocket connection closed`);
-        });
-
-        ws.addEventListener('error', (error) => {
-            console.error(`[Client] ❌ WebSocket error:`, error);
-        });
-
-        async function startWebRTC() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    audio: true,
-                    video: true
-                });
-                document.getElementById('localVideo').srcObject = stream;
-
-                console.log(`[Client] 🎥 getUserMedia succeeded. Local stream active.`);
-                console.log(`[Client] 🔊 Number of tracks in stream: ${stream.getTracks().length}`);
-
-                peerConnection = new RTCPeerConnection({
-                    iceServers: [{
-                        urls: [
-                            'stun:stun.l.google.com:19302',
-                            'stun:stun1.l.google.com:19302',
-                        ],
-                    }, ],
-                });
-
-                peerConnection.oniceconnectionstatechange = (event) => {
-                    console.log(`[Client] ICE Connection State Change: ${peerConnection.iceConnectionState}`);
-                };
-
-                peerConnection.onconnectionstatechange = (event) => {
-                    console.log(`[Client] Peer Connection State Change: ${peerConnection.connectionState}`);
-                };
-
-                peerConnection.ontrack = (event) => {
-                    console.log(`[Client] ✅✅✅ ontrack event fired!`);
-                    console.log(`[Client] 🎬 Tracks in ontrack event:`, event.tracks);
-                    console.log(`[Client] 🌊 Streams in ontrack event:`, event.streams);
-                    const remoteVideo = document.getElementById('remoteVideo'); // Target the correct remote video element
-                    if (event.streams && event.streams.length > 0) {
-                        remoteVideo.srcObject = event.streams[0];
-                        console.log(`[Client] 📺 Remote video stream set!`);
-                    } else {
-                        console.warn(`[Client] No streams found in ontrack event!`);
-                    }
-                };
-
-                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-
-                const localSdp = peerConnection.localDescription.sdp;
-                const audioMid = "0";
-
-                const trackData = {
-                    sessionDescription: { // Explicitly include sessionDescription
-                        type: "offer",
-                        sdp: localSdp
-                    },
-                    tracks: [{
-                        location: "local",
-                        mid: audioMid,
-                        trackName: `local-audio-track-${Date.now()}`
-                    }]
-                };
-                const joinCallMessage = {
-                    type: 'joinCall',
-                    clientId: clientId,
-                    trackData: trackData,
-                    roomId: ROOM_ID // Send the room ID
-                };
-                console.log(`[Client] ⬆️ Sending joinCall message to Server:`, joinCallMessage);
-                ws.send(JSON.stringify(joinCallMessage));
-                console.log(`[Client] ⬆️ Join call message sent`);
-
-            } catch (error) {
-                console.error(`[Client] ❌ Error generating SDP:`, error);
-                console.error(`[Client] ❌ getUserMedia error:`, error);
+            if (message.type === 'offer') {
+                await handleOffer(message.sdp, message.clientId);
             }
+
+            if (message.type === 'answer') {
+                await handleAnswer(message.sdp, message.clientId);
+            }
+        };
+
+        function setupPeerConnection(remoteClientId) {
+            if (peerConnections[remoteClientId]) return;
+            
+            const peerConnection = new RTCPeerConnection();
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({ type: "candidate", candidate: event.candidate, targetClientId: remoteClientId }));
+                }
+            };
+
+            peerConnection.ontrack = event => {
+                let remoteVideo = document.getElementById(remoteClientId);
+                if (!remoteVideo) {
+                    remoteVideo = document.createElement("video");
+                    remoteVideo.id = remoteClientId;
+                    remoteVideo.autoplay = true;
+                    remoteVideo.playsInline = true;
+                    remoteVideos.appendChild(remoteVideo);
+                }
+                remoteVideo.srcObject = event.streams[0];
+            };
+
+            peerConnections[remoteClientId] = peerConnection;
+
+            createOffer(remoteClientId);
         }
 
-        function generateClientId() {
-            return Math.random().toString(36).substring(2, 15);
+        async function createOffer(targetClientId) {
+            const peerConnection = peerConnections[targetClientId];
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            ws.send(JSON.stringify({ type: "offer", sdp: offer.sdp, targetClientId }));
         }
+
+        async function handleOffer(sdp, senderId) {
+            setupPeerConnection(senderId);
+            const peerConnection = peerConnections[senderId];
+
+            await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp }));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp, targetClientId: senderId }));
+        }
+
+        async function handleAnswer(sdp, senderId) {
+            const peerConnection = peerConnections[senderId];
+            await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp }));
+        }
+
+        getLocalStream();
     </script>
 </body>
-
 </html>

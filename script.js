@@ -108,6 +108,51 @@ function addTrackToCloudflareSession(sessionId, trackData) {
     });
 }
 
+function getTracks(sessionId) {
+    return new Promise((resolve, reject) => {
+        const options = {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${APP_TOKEN}`,
+            },
+        };
+
+        console.log(`[Server] 📞 Calling Cloudflare API: GET ${API_BASE}/sessions/${sessionId}`);
+
+        const req = https.request(`${API_BASE}/sessions/${sessionId}`, options, (res) => {
+            let data = '';
+
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const parsedData = JSON.parse(data);
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        console.log(`[Server] ✅ Cloudflare API: GetTracks successfully`);
+                        resolve(parsedData.tracks);
+                    } else {
+                        console.error(`[Server] ❌ Cloudflare API: GetTracks failed with status ${res.statusCode}`);
+                        console.error(`[Server] ❌ Error description: ${parsedData.errorDescription}`);
+                        reject(new Error(`Adding track failed with status ${res.statusCode}: ${parsedData.errorDescription}`));
+                    }
+                } catch (parseError) {
+                    console.error("[Server] ❌ JSON Parsing Error:", parseError.message);
+                    reject(new Error(`Error parsing JSON response: ${parseError.message}`));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            console.error("[Server] ⚠️ Request Error:", error);
+            reject(error);
+        });
+
+        req.end();
+    });
+}
+
 wss.on('connection', ws => {
     let clientId;
     let sessionId;

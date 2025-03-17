@@ -1,119 +1,119 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Cloudflare WebRTC Test</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudflare WebRTC Multi-User</title>
 </head>
 <body>
-    <h1>Cloudflare WebRTC Test</h1>
-    <button id="getSdpBtn">Generate Local SDP</button><br>
-    <textarea id="localSdp" placeholder="Local SDP will appear here" rows="10" cols="50"></textarea><br>
+    <h1>Cloudflare WebRTC Multi-User Video Call</h1>
 
     <h2>Local Video</h2>
     <video id="localVideo" autoplay muted playsinline></video>
+    <p>Client ID: <span id="localClientId"></span></p>
+    <p>Session ID: <span id="localSessionId"></span></p>
+    <p>Track ID: <span id="localTrackId"></span></p>
 
-    <h2>Remote Video</h2>
+    <h2>Remote Videos</h2>
     <div id="remoteVideos"></div>
 
     <script>
-        const ws = new WebSocket('ws://localhost:3000');
+        const ws = new WebSocket('ws://localhost:3000'); // WebSocket connection
         let clientId;
-        let peerConnection;
-        let sessionId; // Store the Cloudflare session ID
-        const ROOM_ID = "default-room"; // Added Default Room
+        let sessionId;
+        let trackId;
+        const ROOM_ID = "default-room"; // Default Room for Multi-User
+
+        // Store remote peer connections
+        const peerConnections = {};
 
         ws.addEventListener('open', () => {
-            console.log('WebSocket connected');
+            console.log('[Client] ✅ WebSocket connected');
             clientId = generateClientId();
-            console.log(`[Client] ✅ WebSocket Connection opened. Client ID: ${clientId}`);
+            document.getElementById('localClientId').textContent = clientId;
+            startWebRTC();
         });
 
-        ws.addEventListener('message', (event) => {
+        ws.addEventListener('message', async (event) => {
             const message = JSON.parse(event.data);
-            console.log(`[Client] ⬇️ Received message (Type: ${message.type}) from Server:`, message);
+            console.log(`[Client] ⬇️ Received: ${message.type}`, message);
 
-            if (message.type === 'sessionCreated') {
-                sessionId = message.sessionId; // Store the session ID
-                console.log(`[Client] 🔑 Cloudflare session created. Session ID: ${sessionId}`);
-            } else if (message.type === 'trackAdded') {
-                console.log(`[Client] ✅ Audio track added successfully! Response:`, message.response);
+            if (message.type === 'trackAdded') {
+                sessionId = message.sessionId;
+                document.getElementById('localSessionId').textContent = sessionId;
+                trackId = message.response.tracks[0].trackName;
+                document.getElementById('localTrackId').textContent = trackId;
+                console.log(`[Client] 🔑 Cloudflare session created: ${sessionId}, Track: ${trackId}`);
+
             } else if (message.type === 'remoteClientConnected') {
-                console.log(`[Client] 🧑‍🤝‍🧑 Remote client connected. Client ID: ${message.clientId}`);
+                handleRemoteClient(message);
             } else if (message.type === 'error') {
-                console.error(`[Client] ❌ Error from Server: ${message.message}`);
+                console.error(`[Client] ❌ Server Error: ${message.message}`);
             }
         });
 
-        ws.addEventListener('close', () => {
-            console.log(`[Client] 🚪 WebSocket connection closed`);
-        });
-
-        ws.addEventListener('error', (error) => {
-            console.error(`[Client] ❌ WebSocket error:`, error);
-        });
-
-        document.getElementById('getSdpBtn').addEventListener('click', async () => {
+        async function startWebRTC() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    audio: true,
-                    video: true
-                });
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                 document.getElementById('localVideo').srcObject = stream;
 
-                console.log(`[Client] 🎥 getUserMedia succeeded. Local stream active.`);
-                console.log(`[Client] 🔊 Number of tracks in stream: ${stream.getTracks().length}`);
-
-                peerConnection = new RTCPeerConnection({
-                    iceServers: [{
-                        urls: [
-                            'stun:stun.l.google.com:19302',
-                            'stun:stun1.l.google.com:19302',
-                        ],
-                    }, ],
+                console.log(`[Client] 🎥 Local stream active.`);
+                const peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
                 });
-                peerConnection.ontrack = (event) => {
-                    console.log(`[Client] ✅✅✅ ontrack event fired!`);
-                    console.log(`[Client] 🎬 Tracks in ontrack event:`, event.tracks);
-                    console.log(`[Client] 🌊 Streams in ontrack event:`, event.streams);
-                };
+
                 stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
 
-                const localSdp = peerConnection.localDescription.sdp;
-                const audioMid = "0";
-
                 const trackData = {
-                    sessionDescription: { // Explicitly include sessionDescription
-                        type: "offer",
-                        sdp: localSdp
-                    },
-                    tracks: [{
-                        location: "local",
-                        mid: audioMid,
-                        trackName: `local-audio-track-${Date.now()}`
-                    }]
+                    sessionDescription: { type: "offer", sdp: peerConnection.localDescription.sdp },
+                    tracks: [{ location: "local", mid: "0", trackName: `local-track-${Date.now()}` }]
                 };
-                const joinCallMessage = {
+
+                ws.send(JSON.stringify({
                     type: 'joinCall',
                     clientId: clientId,
                     trackData: trackData,
-                    roomId: ROOM_ID // Send the room ID
-                };
-                console.log(`[Client] ⬆️ Sending joinCall message to Server:`, joinCallMessage);
-                ws.send(JSON.stringify(joinCallMessage));
-                console.log(`[Client] ⬆️ Join call message sent`);
+                    roomId: ROOM_ID
+                }));
 
             } catch (error) {
-                console.error(`[Client] ❌ Error generating SDP:`, error);
-                console.error(`[Client] ❌ getUserMedia error:`, error);
+                console.error(`[Client] ❌ Error:`, error);
             }
-        });
+        }
+
+        function handleRemoteClient(message) {
+            const remoteClientId = message.clientId;
+            const remoteSessionId = message.sessionId;
+
+            console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}`);
+
+            if (!peerConnections[remoteClientId]) {
+                const remoteVideo = document.createElement('video');
+                remoteVideo.id = `video-${remoteClientId}`;
+                remoteVideo.autoplay = true;
+                remoteVideo.playsInline = true;
+                document.getElementById('remoteVideos').appendChild(remoteVideo);
+
+                const peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+                });
+
+                peerConnection.ontrack = (event) => {
+                    if (event.streams.length > 0) {
+                        remoteVideo.srcObject = event.streams[0];
+                    }
+                };
+
+                peerConnections[remoteClientId] = peerConnection;
+            }
+        }
 
         function generateClientId() {
             return Math.random().toString(36).substring(2, 15);
         }
     </script>
 </body>
-
 </html>

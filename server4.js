@@ -1,4 +1,3 @@
-// SERVER CODE
 const https = require('https');
 const WebSocket = require('ws');
 
@@ -32,6 +31,7 @@ function createCloudflareSession() {
     });
 }
 
+
 function addTrackToCloudflareSession(sessionId, trackData) {
     return new Promise((resolve, reject) => {
         const options = {
@@ -48,64 +48,20 @@ function addTrackToCloudflareSession(sessionId, trackData) {
             res.on('end', () => {
                 try {
                     const parsedData = JSON.parse(data);
+                    console.log("[Server] Cloudflare Answer SDP reached");
+                    console.log("set description done nad cloudflare is receveing my audio and veio")
                     res.statusCode < 300 ? resolve(parsedData) : reject(new Error(parsedData.errorDescription));
                 } catch (error) { reject(error); }
             });
         });
         req.on('error', reject);
         req.write(JSON.stringify(trackData));
+        console.log("[Server] Offer sent to Cloudflare");
         req.end();
     });
 }
 
-// async function setupWebRTC(sessionId, trackData, localPeerConnection) {
-//     try {
-//         // Step 1: Add track to Cloudflare session
-//         console.log("Adding track to Cloudflare session...");
-//         const pushTracksResponse = await addTrackToCloudflareSession(sessionId, trackData);
-//         console.log("Track added successfully:", pushTracksResponse);
-
-//         // Step 2: Set up ICE connection state handler
-//         console.log("Setting up ICE connection state handler...");
-//         const connected = new Promise((resolve, reject) => {
-//             // Timeout after 5s
-//             const timeout = setTimeout(() => {
-//                 reject(new Error("ICE connection timeout"));
-//             }, 5000);
-
-//             const iceConnectionStateChangeHandler = () => {
-//                 console.log("ICE connection state changed:", localPeerConnection.iceConnectionState);
-//                 if (localPeerConnection.iceConnectionState === "connected") {
-//                     localPeerConnection.removeEventListener("iceconnectionstatechange", iceConnectionStateChangeHandler);
-//                     clearTimeout(timeout);
-//                     console.log("ICE connection state is connected.");
-//                     resolve();
-//                 }
-//             };
-
-//             localPeerConnection.addEventListener("iceconnectionstatechange", iceConnectionStateChangeHandler);
-//         });
-
-//         console.log("ICE connection state handler setup.");
-
-//         // Step 3: Set Remote Description
-//         console.log("Setting remote description...");
-//         await localPeerConnection.setRemoteDescription(new RTCSessionDescription(pushTracksResponse.sessionDescription));
-//         console.log("Set remote description.");
-
-//         // Step 4: Wait for ICE connection to be connected
-//         console.log("Waiting for ICE connection to be connected...");
-//         await connected;
-//         console.log("ICE connection is connected.");
-
-//     } catch (error) {
-//         console.error("Error in setupWebRTC:", error);
-//     }
-// }
-
-
 wss.on('connection', ws => {
-    
     let clientId, sessionId, roomId;
 
     ws.on('message', async message => {
@@ -146,31 +102,26 @@ wss.on('connection', ws => {
     ws.on('close', () => { if (rooms[roomId] && rooms[roomId][clientId]) delete rooms[roomId][clientId]; });
     ws.on('error', console.error);
 });
+
 wss.on("connection", (ws) => {
     ws.on("message", async (data) => { 
         try {
             const message = JSON.parse(data);
-            console.log("[Server] Received message:", message);
+            console.log("[Server] Received message:");
 
             if (message.type === "pullTracks") {
                 const { sessionId, body } = message;
-            
                 console.log("[Server] Pulling tracks for session:", sessionId);
                 console.log("[Server] Received track request:", body);
-            
-                // Dynamically extract tracks
+                
                 const tracksToPull = body.tracks.map(track => ({
                     location: "remote",
                     trackName: track.trackName,
                     sessionId: track.sessionId || sessionId
                 }));
-            const bodyy={method: "POST",
-                headers: {
-                    'Authorization': `Bearer ${APP_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ tracks: tracksToPull })}
 
+                console.log("[Server] Sending API Request with tracks:", tracksToPull);
+                
                 const options = {
                     method: "POST",
                     headers: {
@@ -179,15 +130,11 @@ wss.on("connection", (ws) => {
                     },
                     body: JSON.stringify({ tracks: tracksToPull })
                 };
-            
-                console.log("[Server] Sending API Request with tracks:", tracksToPull);
                 console.log(options);
-            
+                
                 const req = https.request(`${API_BASE}/sessions/${sessionId}/tracks/new`, options, (res) => {
                     let responseData = '';
-            
                     res.on('data', (chunk) => { responseData += chunk; });
-            
                     res.on('end', () => {
                         try {
                             const pullResponse = JSON.parse(responseData);
@@ -199,24 +146,17 @@ wss.on("connection", (ws) => {
                         }
                     });
                 });
-            
                 req.on('error', (error) => {
                     console.error("[Server] ❌ API Request error:", error);
                     ws.send(JSON.stringify({ type: "error", message: `API Request error: ${error.message}` }));
                 });
-            
-                // Write the data to the request body
-                const requestBody = JSON.stringify({ tracks: tracksToPull });
-                req.write(requestBody);
+                req.write(JSON.stringify({ tracks: tracksToPull }));
                 req.end();
-            } // End the request
-            
+            }
         } catch (error) {
             console.error("[Server] ❌ Error handling message:", error);
         }
     });
 });
-
-
 
 console.log('🚀 WebSocket server started on port 3000');

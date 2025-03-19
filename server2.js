@@ -1,4 +1,3 @@
-// SERVER CODE
 const https = require('https');
 const WebSocket = require('ws');
 
@@ -32,6 +31,7 @@ function createCloudflareSession() {
     });
 }
 
+
 function addTrackToCloudflareSession(sessionId, trackData) {
     return new Promise((resolve, reject) => {
         const options = {
@@ -48,12 +48,14 @@ function addTrackToCloudflareSession(sessionId, trackData) {
             res.on('end', () => {
                 try {
                     const parsedData = JSON.parse(data);
+                    console.log("[Server] Cloudflare Answer SDP:", parsedData.sessionDescription?.sdp);
                     res.statusCode < 300 ? resolve(parsedData) : reject(new Error(parsedData.errorDescription));
                 } catch (error) { reject(error); }
             });
         });
         req.on('error', reject);
         req.write(JSON.stringify(trackData));
+        console.log("[Server] Offer sent to Cloudflare");
         req.end();
     });
 }
@@ -94,10 +96,65 @@ wss.on('connection', ws => {
                 ws.send(JSON.stringify({ type: 'error', message: error.message }));
             }
         }
-    });
+    });     
 
     ws.on('close', () => { if (rooms[roomId] && rooms[roomId][clientId]) delete rooms[roomId][clientId]; });
     ws.on('error', console.error);
+});
+
+wss.on("connection", (ws) => {
+    ws.on("message", async (data) => { 
+        try {
+            const message = JSON.parse(data);
+            console.log("[Server] Received message:", message);
+
+            if (message.type === "pullTracks") {
+                const { sessionId, body } = message;
+                console.log("[Server] Pulling tracks for session:", sessionId);
+                console.log("[Server] Received track request:", body);
+                
+                const tracksToPull = body.tracks.map(track => ({
+                    location: "remote",
+                    trackName: track.trackName,
+                    sessionId: track.sessionId || sessionId
+                }));
+
+                console.log("[Server] Sending API Request with tracks:", tracksToPull);
+                
+                const options = {
+                    method: "POST",
+                    headers: {
+                        'Authorization': `Bearer ${APP_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tracks: tracksToPull })
+                };
+                
+                const req = https.request(`${API_BASE}/sessions/${sessionId}/tracks/new`, options, (res) => {
+                    let responseData = '';
+                    res.on('data', (chunk) => { responseData += chunk; });
+                    res.on('end', () => {
+                        try {
+                            const pullResponse = JSON.parse(responseData);
+                            console.log("[Server] ✅ Pull response received:", pullResponse);
+                            ws.send(JSON.stringify({ type: "pullTracksResponse", data: pullResponse }));
+                        } catch (error) {
+                            console.error("[Server] ❌ Error parsing pull response:", error);
+                            ws.send(JSON.stringify({ type: "error", message: "Failed to parse pull response" }));
+                        }
+                    });
+                });
+                req.on('error', (error) => {
+                    console.error("[Server] ❌ API Request error:", error);
+                    ws.send(JSON.stringify({ type: "error", message: `API Request error: ${error.message}` }));
+                });
+                req.write(JSON.stringify({ tracks: tracksToPull }));
+                req.end();
+            }
+        } catch (error) {
+            console.error("[Server] ❌ Error handling message:", error);
+        }
+    });
 });
 
 console.log('🚀 WebSocket server started on port 3000');

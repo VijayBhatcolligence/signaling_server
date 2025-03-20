@@ -22,7 +22,7 @@
         const ws = new WebSocket('ws://localhost:3000'); // WebSocket connection
         let clientId;
         let sessionId;
-        let remoteAnswer;
+        let remoteAnswer='';
         let transceivers = []; 
         const ROOM_ID = "default-room";
         const peerConnection = new RTCPeerConnection({

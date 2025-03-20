@@ -8,6 +8,49 @@ const APP_TOKEN = "8868573252ae977abc3fbbc421f8ae2c41b2c880ce38e988e367f8f10afeb
 const API_BASE = `https://rtc.live.cloudflare.com/v1/apps/${APP_ID}`;
 
 const rooms = {}; // Store clients by room
+wss.on("connection", (ws) => { 
+    ws.on("message", (data) => {
+        try {
+            const message = JSON.parse(data);
+            const { roomId, clientId, targetClientId, sdp } = message;
+
+            if (!rooms[roomId]) {
+                rooms[roomId] = {};
+            }
+
+            if (message.type === "sdpAnswer") {
+                // Store SDP answer for this client
+                rooms[roomId][clientId] = { ws, sdp };
+
+                // Send the SDP answer ONLY to the intended target client
+                if (targetClientId && rooms[roomId][targetClientId]) {
+                    rooms[roomId][targetClientId].ws.send(JSON.stringify({
+                        type: "sdpAnswer",
+                        sdp: sdp,
+                        senderClientId: clientId  // Let the receiver know who sent the SDP
+                    }));
+                }
+            }
+
+            if (message.type === "joinRoom") {
+                rooms[roomId][clientId] = { ws };
+
+                // 🚀 Send existing SDP answers to the newly joined client
+                for (const remoteClientId in rooms[roomId]) {
+                    if (remoteClientId !== clientId && rooms[roomId][remoteClientId].sdp) {
+                        ws.send(JSON.stringify({
+                            type: "sdpAnswer",
+                            sdp: rooms[roomId][remoteClientId].sdp,
+                            senderClientId: remoteClientId  // Indicate which client sent the SDP
+                        }));
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error handling message:", error);
+        }
+    });
+});
 
 function createCloudflareSession() {
     return new Promise((resolve, reject) => {
@@ -165,7 +208,7 @@ wss.on("connection", (ws) => {
     
             if (message.type === "sdpAnswer") {
                 // Broadcast to all other peers
-                for (const roomId in rooms) {
+                for (let roomId in rooms) {
                     for (const remoteClientId in rooms[roomId]) {
                         if (rooms[roomId][remoteClientId].ws !== ws) { // Don't send back to sender
                             rooms[roomId][remoteClientId].ws.send(JSON.stringify({

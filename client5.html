@@ -121,6 +121,8 @@
             const remoteSessionId = message.sessionId;
             const trackName = message.trackData.tracks[0]?.trackName || "N/A";
             const trackName1 = message.trackData.tracks[1]?.trackName || "N/A";
+            const trackNames = message.trackData.tracks.map(track => track.trackName || "N/A");
+
 
             console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track1: ${trackName}, Track2: ${trackName1}`);
 

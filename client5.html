@@ -72,11 +72,10 @@
 
             } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
-
-            } else if (message.type === 'error') {
-                console.error(`[Client] ❌ Server Error: ${message.message}`);
-            }
-        });
+                console.log(`[Client] 🔄 Received offer from client b, setting remote description...`);
+               
+        }
+    });
 
         async function startWebRTC() {
             try {
@@ -153,7 +152,7 @@
                 const tracksToPull = transceivers.map(({ sender }) => ({
                     location: "remote",
                     trackName: sender.track?.id || "unknown",
-                    sessionId: remoteSessionId  
+                    sessionId: sessionId 
                 }));
 
                 ws.send(JSON.stringify({

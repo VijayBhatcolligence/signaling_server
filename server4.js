@@ -158,21 +158,39 @@ wss.on("connection", (ws) => {
     });
 });
 //*******************************************************************************************new changes
-wss.on("connection", (ws) => { 
+wss.on("connection", (ws) => {
     ws.on("message", (data) => {
         try {
             const message = JSON.parse(data);
-    
+
             if (message.type === "sdpAnswer") {
-                // Broadcast to all other peers
-                for (const roomId in rooms) {
-                    for (const remoteClientId in rooms[roomId]) {
-                        if (rooms[roomId][remoteClientId].ws !== ws) { // Don't send back to sender
-                            rooms[roomId][remoteClientId].ws.send(JSON.stringify({
-                                type: "sdpAnswer",
-                                sdp: message.sdp
-                            }));
-                        }
+                const { roomId, sdp } = message;
+
+                // Ensure the room exists
+                if (!rooms[roomId]) {
+                    rooms[roomId] = {};
+                }
+
+                // Store SDP answer for the sender
+                rooms[roomId][ws] = { ws, sdp };
+
+                // Broadcast the new SDP answer to all other peers in the room
+                for (const remoteClient in rooms[roomId]) {
+                    if (rooms[roomId][remoteClient].ws !== ws) {
+                        rooms[roomId][remoteClient].ws.send(JSON.stringify({
+                            type: "sdpAnswer",
+                            sdp: sdp
+                        }));
+                    }
+                }
+
+                // Send all stored SDP answers to the new peer so they get previous peers' SDP
+                for (const remoteClient in rooms[roomId]) {
+                    if (rooms[roomId][remoteClient].ws !== ws && rooms[roomId][remoteClient].sdp) {
+                        ws.send(JSON.stringify({
+                            type: "sdpAnswer",
+                            sdp: rooms[roomId][remoteClient].sdp
+                        }));
                     }
                 }
             }
@@ -180,7 +198,16 @@ wss.on("connection", (ws) => {
             console.error("Error handling message:", error);
         }
     });
-    
+
+    ws.on("close", () => {
+        // Remove client from rooms when they disconnect
+        for (const roomId in rooms) {
+            if (rooms[roomId][ws]) {
+                delete rooms[roomId][ws];
+            }
+        }
+    });
 });
+
 //*********************************************************************************************************end of new changes
 console.log('🚀 WebSocket server started on port 3000');

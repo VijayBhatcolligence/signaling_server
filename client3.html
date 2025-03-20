@@ -22,7 +22,6 @@
         const ws = new WebSocket('ws://localhost:3000'); // WebSocket connection
         let clientId;
         let sessionId;
-        let remoteAnswer;
         let transceivers = []; 
         const ROOM_ID = "default-room";
         const peerConnection = new RTCPeerConnection({
@@ -50,14 +49,13 @@
                 document.getElementById('localTrackId').textContent = trackId;
                 document.getElementById('localTrackId1').textContent = trackId1;
                 console.log(`[Client] 🔑 Cloudflare session created: ${sessionId}, Track1: ${trackId}, Track2: ${trackId1}`);
-                
+                console.log(message.response.sessionDescription.sdp);
 
             }  if (message.type === 'remoteClientConnected') {
                 handleRemoteClient(message);
+
             } 
-            
-            if (message.type ==='sdpAnswer'){
-                answerbroadcast(message);}
+ 
     
             if (message.type === 'trackAdded') {
         console.log(peerConnection);
@@ -74,33 +72,10 @@
 
             } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
-
-                //**********************************************************************************************************new changes
                 console.log(`[Client] 🔄 Received offer from client b, setting remote description...`);
-                try {
-        await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(message.data.sessionDescription)
-        );
-        console.log(`[Client] ✅ Remote Description set`);
-    } catch (error) {
-        console.error(`[Client] ❌ Error setting remote description:`, error);
-    }
-    console.log(`[Client] 🔄 Creating answer...`);
-    remoteAnswer = await peerConnection.createAnswer();
-        console.log("Created remote answer:", remoteAnswer);
-
-        ws.send(JSON.stringify({
-    type: "sdpAnswer",
-    sdp: remoteAnswer
-}));
-
-
-//**************************************************************************************************//end of new changes
-
-            } else if (message.type === 'error') {
-                console.error(`[Client] ❌ Server Error: ${message.message}`);
-            }
-        });
+               
+        }
+    });
 
         async function startWebRTC() {
             try {
@@ -145,6 +120,8 @@
             const remoteSessionId = message.sessionId;
             const trackName = message.trackData.tracks[0]?.trackName || "N/A";
             const trackName1 = message.trackData.tracks[1]?.trackName || "N/A";
+            const trackNames = message.trackData.tracks.map(track => track.trackName || "N/A");
+
 
             console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track1: ${trackName}, Track2: ${trackName1}`);
 
@@ -163,6 +140,11 @@
 
                 peerConnections[remoteClientId] = peerConnection;
             }
+            //new changes 
+
+
+
+            //end of new changes 
 
             setTimeout(() => {
                 console.log("[Client] 🔄 Pulling tracks from Calls API...");
@@ -172,21 +154,20 @@
                     return;
                 }
 
-                const tracksToPull = transceivers.map(({ sender }) => ({
-                    location: "remote",
-                    trackName: sender.track?.id || "unknown",
-                    sessionId: sessionId  
-                }));
+                
+                const trackData = message?.trackData?.tracks?.map(track => ({
+                          location: "remote",
+                          trackName: track?.trackName || "unknown",
+                         sessionId: remoteSessionId,
+                             }));
+                console.log(trackData);
 
                 ws.send(JSON.stringify({
                     type: "pullTracks",
-                    sessionId: sessionId,
-                    body: { tracks: tracksToPull }
+                    sessionId: remoteSessionId,
+                    body: { tracks: trackData }
                 }));
             }, 1000);
-        }
-        function answerbroadcast(message) {
-            // console.log(message);
         }
 
         function generateClientId() {

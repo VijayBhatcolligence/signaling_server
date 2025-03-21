@@ -48,7 +48,8 @@ function addTrackToCloudflareSession(sessionId, trackData) {
             res.on('end', () => {
                 try {
                     const parsedData = JSON.parse(data);
-                    console.log("[Server] Cloudflare Answer SDP:", parsedData.sessionDescription?.sdp);
+                    console.log("[Server] Cloudflare Answer SDP reached");
+                    console.log("set description done nad cloudflare is receveing my audio and veio")
                     res.statusCode < 300 ? resolve(parsedData) : reject(new Error(parsedData.errorDescription));
                 } catch (error) { reject(error); }
             });
@@ -106,7 +107,6 @@ wss.on("connection", (ws) => {
     ws.on("message", async (data) => { 
         try {
             const message = JSON.parse(data);
-            console.log("[Server] Received message:", message);
 
             if (message.type === "pullTracks") {
                 const { sessionId, body } = message;
@@ -129,6 +129,7 @@ wss.on("connection", (ws) => {
                     },
                     body: JSON.stringify({ tracks: tracksToPull })
                 };
+                console.log(options);
                 
                 const req = https.request(`${API_BASE}/sessions/${sessionId}/tracks/new`, options, (res) => {
                     let responseData = '';
@@ -156,5 +157,64 @@ wss.on("connection", (ws) => {
         }
     });
 });
+//*******************************************************************************************new changes
+// wss.on("connection", (ws) => {
+//     ws.on("message", async (data) => {
+//         try {
+//             const message = JSON.parse(data);
 
+//             if (message.type === "sdpAnswer") {
+//                 const { clientId, sessionDescription } = message;
+
+//                 // Store the SDP answer for the client
+//                 if (!clients[clientId]) {
+//                     clients[clientId] = { ws, sessionDescription };
+//                 } else {
+//                     clients[clientId].sessionDescription = sessionDescription;
+//                 }
+
+//                 // Broadcast the SDP answer to all other connected peers
+//                 for (const remoteClientId in clients) {
+//                     if (remoteClientId !== clientId) {
+//                         clients[remoteClientId].ws.send(JSON.stringify({
+//                             type: "sdpAnswer",
+//                             clientId: clientId,
+//                             sessionDescription: sessionDescription
+//                         }));
+//                     }
+//                 }
+
+//                 // Perform renegotiation with Cloudflare's session API
+//                 const renegotiateResponse = await fetch(
+//                     `${API_BASE}/sessions/${clientId}/renegotiate`,
+//                     {
+//                         method: "PUT",
+//                         headers,
+//                         body: JSON.stringify({ sessionDescription }),
+//                     }
+//                 ).then((res) => res.json());
+
+//                 console.log("Renegotiate response:", renegotiateResponse);
+
+//                 if (renegotiateResponse.errorCode) {
+//                     throw new Error(renegotiateResponse.errorDescription);
+//                 }
+//             }
+//         } catch (error) {
+//             console.error("Error handling message:", error);
+//         }
+//     });
+
+//     ws.on("close", () => {
+//         for (const clientId in clients) {
+//             if (clients[clientId].ws === ws) {
+//                 delete clients[clientId];
+//                 break;
+//             }
+//         }
+//     });
+// });
+
+
+//*********************************************************************************************************end of new changes
 console.log('🚀 WebSocket server started on port 3000');

@@ -48,7 +48,8 @@ function addTrackToCloudflareSession(sessionId, trackData) {
             res.on('end', () => {
                 try {
                     const parsedData = JSON.parse(data);
-                    console.log("[Server] Cloudflare Answer SDP:", parsedData.sessionDescription?.sdp);
+                    console.log("[Server] Cloudflare Answer SDP reached");
+                    console.log("set description done nad cloudflare is receveing my audio and veio")
                     res.statusCode < 300 ? resolve(parsedData) : reject(new Error(parsedData.errorDescription));
                 } catch (error) { reject(error); }
             });
@@ -106,7 +107,7 @@ wss.on("connection", (ws) => {
     ws.on("message", async (data) => { 
         try {
             const message = JSON.parse(data);
-            console.log("[Server] Received message:", message);
+            console.log("[Server] Received message:");
 
             if (message.type === "pullTracks") {
                 const { sessionId, body } = message;
@@ -129,6 +130,7 @@ wss.on("connection", (ws) => {
                     },
                     body: JSON.stringify({ tracks: tracksToPull })
                 };
+                console.log(options);
                 
                 const req = https.request(`${API_BASE}/sessions/${sessionId}/tracks/new`, options, (res) => {
                     let responseData = '';

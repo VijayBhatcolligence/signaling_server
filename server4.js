@@ -158,62 +158,42 @@ wss.on("connection", (ws) => {
     });
 });
 //*******************************************************************************************new changes
-// wss.on("connection", (ws) => {
-//     ws.on("message", async (data) => {
-//         try {
-//             const message = JSON.parse(data);
+wss.on("connection", (ws) => {
+    ws.on("message", async (data) => {
+        try {
+            const message = JSON.parse(data);
+    
+            if (message.type === "renegotiate") {
+                const { clientid, sessionDescription } = message;
+    
+                // Forward the correct payload structure to the API
+                const renegotiateResponse = await fetch(
+                    `${API_BASE}/sessions/${clientid}/renegotiate`,
+                    {
+                        method: "PUT",
+                        headers: {
+                            'Authorization': `Bearer ${APP_TOKEN}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ sessionDescription }), // ✅ Matches expected format
+                    }
+                ).then((res) => res.json());
+    
+                console.log("[Server] Renegotiate response:", renegotiateResponse);
+    
+                // Send response back to client
+                ws.send(JSON.stringify({
+                    type: "renegotiateResponse",
+                    clientid,
+                    data: renegotiateResponse
+                }));
+            }
+        } catch (error) {
+            console.error("Error handling renegotiation:", error);
+        }
+    });
+});
 
-//             if (message.type === "sdpAnswer") {
-//                 const { clientId, sessionDescription } = message;
-
-//                 // Store the SDP answer for the client
-//                 if (!clients[clientId]) {
-//                     clients[clientId] = { ws, sessionDescription };
-//                 } else {
-//                     clients[clientId].sessionDescription = sessionDescription;
-//                 }
-
-//                 // Broadcast the SDP answer to all other connected peers
-//                 for (const remoteClientId in clients) {
-//                     if (remoteClientId !== clientId) {
-//                         clients[remoteClientId].ws.send(JSON.stringify({
-//                             type: "sdpAnswer",
-//                             clientId: clientId,
-//                             sessionDescription: sessionDescription
-//                         }));
-//                     }
-//                 }
-
-//                 // Perform renegotiation with Cloudflare's session API
-//                 const renegotiateResponse = await fetch(
-//                     `${API_BASE}/sessions/${clientId}/renegotiate`,
-//                     {
-//                         method: "PUT",
-//                         headers,
-//                         body: JSON.stringify({ sessionDescription }),
-//                     }
-//                 ).then((res) => res.json());
-
-//                 console.log("Renegotiate response:", renegotiateResponse);
-
-//                 if (renegotiateResponse.errorCode) {
-//                     throw new Error(renegotiateResponse.errorDescription);
-//                 }
-//             }
-//         } catch (error) {
-//             console.error("Error handling message:", error);
-//         }
-//     });
-
-//     ws.on("close", () => {
-//         for (const clientId in clients) {
-//             if (clients[clientId].ws === ws) {
-//                 delete clients[clientId];
-//                 break;
-//             }
-//         }
-//     });
-// });
 
 
 //*********************************************************************************************************end of new changes

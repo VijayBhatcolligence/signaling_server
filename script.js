@@ -107,7 +107,6 @@ wss.on("connection", (ws) => {
     ws.on("message", async (data) => { 
         try {
             const message = JSON.parse(data);
-            console.log("[Server] Received message:");
 
             if (message.type === "pullTracks") {
                 const { sessionId, body } = message;
@@ -158,5 +157,44 @@ wss.on("connection", (ws) => {
         }
     });
 });
+//*******************************************************************************************new changes
+wss.on("connection", (ws) => {
+    ws.on("message", async (data) => {
+        try {
+            const message = JSON.parse(data);
+    
+            if (message.type === "renegotiate") {
+                const { clientid, sessionDescription } = message;
+    
+                // Forward the correct payload structure to the API
+                const renegotiateResponse = await fetch(
+                    `${API_BASE}/sessions/${clientid}/renegotiate`,
+                    {
+                        method: "PUT",
+                        headers: {
+                            'Authorization': `Bearer ${APP_TOKEN}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ sessionDescription }), // ✅ Matches expected format
+                    }
+                ).then((res) => res.json());
+    
+                console.log("[Server] Renegotiate response:", renegotiateResponse);
+    
+                // Send response back to client
+                ws.send(JSON.stringify({
+                    type: "renegotiateResponse",
+                    clientid,
+                    data: renegotiateResponse
+                }));
+            }
+        } catch (error) {
+            console.error("Error handling renegotiation:", error);
+        }
+    });
+});
 
+
+
+//*********************************************************************************************************end of new changes
 console.log('🚀 WebSocket server started on port 3000');

@@ -7,6 +7,7 @@
 </head>
 <body>
     <h1>Cloudflare WebRTC Multi-User Video Call</h1>
+    
 
     <h2>Local Video</h2>
     <video id="localVideo" autoplay muted playsinline></video>
@@ -16,15 +17,17 @@
     <p>Track ID 2: <span id="localTrackId1"></span></p>
 
     <h2>Remote Videos</h2>
-    <div id="remoteVideos"></div>
+    <video id="remote" autoplay muted playsinline></video>
 
     <script>
+        const remoteVideo = document.querySelector("video#remote");
         const ws = new WebSocket('ws://localhost:3000'); // WebSocket connection
         let clientId;
         let sessionId;
         let transceivers = []; 
+        let track1='';
+        let track2='';
         const ROOM_ID = "default-room";
-        let remoteClientId='';
         const peerConnection = new RTCPeerConnection({
                     iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
                 });
@@ -39,6 +42,7 @@
 
         ws.addEventListener('message', async (event) => {
             const message = JSON.parse(event.data);
+            
 
             if (message.type === 'trackAdded') {
                 sessionId = message.sessionId;
@@ -49,7 +53,7 @@
                 document.getElementById('localTrackId').textContent = trackId;
                 document.getElementById('localTrackId1').textContent = trackId1;
                 console.log(`[Client] 🔑 Cloudflare session created: ${sessionId}, Track1: ${trackId}, Track2: ${trackId1}`);
-               
+                
 
             }  if (message.type === 'remoteClientConnected') {
                 handleRemoteClient(message);
@@ -73,7 +77,29 @@
             } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
                 console.log(`[Client] 🔄 Received offer from client b, setting remote description...`);
+                
                 //new changes 
+                console.log("Setting up track resolving promises...");
+const resolvingTracks = Promise.all(
+  message.data.tracks.map(({ mid }) =>
+    new Promise((res, rej) => {
+      
+      
+      const handleTrack = ({ transceiver, track }) => {
+        console.log("Track event received:", { transceiver, track });
+        if (transceiver.mid !== mid) return;
+        
+        peerConnection.removeEventListener("track", handleTrack);
+        console.log(`Track with mid ${mid} resolved successfully.`);
+        res(track);
+      };
+      
+      peerConnection.addEventListener("track", handleTrack);
+    })
+  )
+);
+console.log("Track resolving promises setup.");
+
                 try {
         await peerConnection.setRemoteDescription(
             new RTCSessionDescription(message.data.sessionDescription)
@@ -86,21 +112,34 @@
     remoteAnswer = await peerConnection.createAnswer();
         console.log("Created remote answer:", remoteAnswer);
 
-//         ws.send(JSON.stringify({
-//     type: "sdpAnswer",
-//     clientId: remoteClientId,
-//     sessionDescription: {
-//         sdp: remoteAnswer,
-//         type: "answer"
-//     }
-// }));
+        ws.send(JSON.stringify({
+    type: "renegotiate",
+    clientid: sessionId,
+    sessionDescription: {
+        sdp: remoteAnswer.sdp,  
+        type: "answer"
+    }
+}));
 
-//end of new changes 
+
+
+
             } else if (message.type === 'error') {
                 console.error(`[Client] ❌ Server Error: ${message.message}`);
                
         }
+        if(message.type == 'renegotiateResponse'){
+    console.log(message, "renegotiate response");
+    //************************************************************************new changes
+console.log("Setting remote video source...");
+const mediaStream = new MediaStream(message.data.tracks);
+      mediaStream.getTracks().forEach((track) => remoteVideoStream.addTrack(track));
+      remoteVideo.srcObject = remoteVideoStream;
+      console.log("Set remote video source.");
+//end of new changes 
+}
     });
+    
 
         async function startWebRTC() {
             try {
@@ -126,6 +165,7 @@
                     }))
                 };
 
+                console.log(trackData);
 
                 ws.send(JSON.stringify({
                     type: 'joinCall',
@@ -140,30 +180,18 @@
         }
 
         function handleRemoteClient(message) {
-             remoteClientId = message.clientId;
+            const remoteClientId = message.clientId;
             const remoteSessionId = message.sessionId;
             const trackName = message.trackData.tracks[0]?.trackName || "N/A";
             const trackName1 = message.trackData.tracks[1]?.trackName || "N/A";
             const trackNames = message.trackData.tracks.map(track => track.trackName || "N/A");
+            track1=message.trackData.tracks[0]?.trackName || "N/A";
+            track2=message.trackData.tracks[1]?.trackName || "N/A";
 
 
             console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track1: ${trackName}, Track2: ${trackName1}`);
 
-            if (!peerConnection) {
-                const remoteVideo = document.createElement('video');
-                remoteVideo.id = `video-${remoteClientId}`;
-                remoteVideo.autoplay = true;
-                remoteVideo.playsInline = true;
-                document.getElementById('remoteVideos').appendChild(remoteVideo);
-
-                peerConnection.ontrack = (event) => {
-                    if (event.streams.length > 0) {
-                        remoteVideo.srcObject = event.streams[0];
-                    }
-                };
-
-                peerConnections[remoteClientId] = peerConnection;
-            }
+            
             //new changes 
 
 

@@ -72,11 +72,10 @@
 
             } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
-
-            } else if (message.type === 'error') {
-                console.error(`[Client] ❌ Server Error: ${message.message}`);
-            }
-        });
+                console.log(`[Client] 🔄 Received offer from client b, setting remote description...`);
+               
+        }
+    });
 
         async function startWebRTC() {
             try {
@@ -121,6 +120,8 @@
             const remoteSessionId = message.sessionId;
             const trackName = message.trackData.tracks[0]?.trackName || "N/A";
             const trackName1 = message.trackData.tracks[1]?.trackName || "N/A";
+            const trackNames = message.trackData.tracks.map(track => track.trackName || "N/A");
+
 
             console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track1: ${trackName}, Track2: ${trackName1}`);
 
@@ -139,6 +140,11 @@
 
                 peerConnections[remoteClientId] = peerConnection;
             }
+            //new changes 
+
+
+
+            //end of new changes 
 
             setTimeout(() => {
                 console.log("[Client] 🔄 Pulling tracks from Calls API...");
@@ -148,16 +154,18 @@
                     return;
                 }
 
-                const tracksToPull = transceivers.map(({ sender }) => ({
-                    location: "remote",
-                    trackName: sender.track?.id || "unknown",
-                    sessionId: sessionId  
-                }));
+                
+                const trackData = message?.trackData?.tracks?.map(track => ({
+                          location: "remote",
+                          trackName: track?.trackName || "unknown",
+                         sessionId: remoteSessionId,
+                             }));
+                console.log(trackData);
 
                 ws.send(JSON.stringify({
                     type: "pullTracks",
-                    sessionId: sessionId,
-                    body: { tracks: tracksToPull }
+                    sessionId: remoteSessionId,
+                    body: { tracks: trackData }
                 }));
             }, 1000);
         }

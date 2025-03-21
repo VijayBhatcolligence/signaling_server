@@ -158,56 +158,63 @@ wss.on("connection", (ws) => {
     });
 });
 //*******************************************************************************************new changes
-wss.on("connection", (ws) => {
-    ws.on("message", (data) => {
-        try {
-            const message = JSON.parse(data);
+// wss.on("connection", (ws) => {
+//     ws.on("message", async (data) => {
+//         try {
+//             const message = JSON.parse(data);
 
-            if (message.type === "sdpAnswer") {
-                const { roomId, sdp } = message;
+//             if (message.type === "sdpAnswer") {
+//                 const { clientId, sessionDescription } = message;
 
-                // Ensure the room exists
-                if (!rooms[roomId]) {
-                    rooms[roomId] = {};
-                }
+//                 // Store the SDP answer for the client
+//                 if (!clients[clientId]) {
+//                     clients[clientId] = { ws, sessionDescription };
+//                 } else {
+//                     clients[clientId].sessionDescription = sessionDescription;
+//                 }
 
-                // Store SDP answer for the sender
-                rooms[roomId][ws] = { ws, sdp };
+//                 // Broadcast the SDP answer to all other connected peers
+//                 for (const remoteClientId in clients) {
+//                     if (remoteClientId !== clientId) {
+//                         clients[remoteClientId].ws.send(JSON.stringify({
+//                             type: "sdpAnswer",
+//                             clientId: clientId,
+//                             sessionDescription: sessionDescription
+//                         }));
+//                     }
+//                 }
 
-                // Broadcast the new SDP answer to all other peers in the room
-                for (const remoteClient in rooms[roomId]) {
-                    if (rooms[roomId][remoteClient].ws !== ws) {
-                        rooms[roomId][remoteClient].ws.send(JSON.stringify({
-                            type: "sdpAnswer",
-                            sdp: sdp
-                        }));
-                    }
-                }
+//                 // Perform renegotiation with Cloudflare's session API
+//                 const renegotiateResponse = await fetch(
+//                     `${API_BASE}/sessions/${clientId}/renegotiate`,
+//                     {
+//                         method: "PUT",
+//                         headers,
+//                         body: JSON.stringify({ sessionDescription }),
+//                     }
+//                 ).then((res) => res.json());
 
-                // Send all stored SDP answers to the new peer so they get previous peers' SDP
-                for (const remoteClient in rooms[roomId]) {
-                    if (rooms[roomId][remoteClient].ws !== ws && rooms[roomId][remoteClient].sdp) {
-                        ws.send(JSON.stringify({
-                            type: "sdpAnswer",
-                            sdp: rooms[roomId][remoteClient].sdp
-                        }));
-                    }
-                }
-            }
-        } catch (error) {
-            console.error("Error handling message:", error);
-        }
-    });
+//                 console.log("Renegotiate response:", renegotiateResponse);
 
-    ws.on("close", () => {
-        // Remove client from rooms when they disconnect
-        for (const roomId in rooms) {
-            if (rooms[roomId][ws]) {
-                delete rooms[roomId][ws];
-            }
-        }
-    });
-});
+//                 if (renegotiateResponse.errorCode) {
+//                     throw new Error(renegotiateResponse.errorDescription);
+//                 }
+//             }
+//         } catch (error) {
+//             console.error("Error handling message:", error);
+//         }
+//     });
+
+//     ws.on("close", () => {
+//         for (const clientId in clients) {
+//             if (clients[clientId].ws === ws) {
+//                 delete clients[clientId];
+//                 break;
+//             }
+//         }
+//     });
+// });
+
 
 //*********************************************************************************************************end of new changes
 console.log('🚀 WebSocket server started on port 3000');

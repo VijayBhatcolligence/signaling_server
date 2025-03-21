@@ -73,6 +73,26 @@
             } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
                 console.log(`[Client] 🔄 Received offer from client b, setting remote description...`);
+                //new changes 
+                try {
+        await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(message.data.sessionDescription)
+        );
+        console.log(`[Client] ✅ Remote Description set`);
+    } catch (error) {
+        console.error(`[Client] ❌ Error setting remote description:`, error);
+    }
+    console.log(`[Client] 🔄 Creating answer...`);
+    remoteAnswer = await peerConnection.createAnswer();
+        console.log("Created remote answer:", remoteAnswer);
+
+        ws.send(JSON.stringify({
+    type: "sdpAnswer",
+    sdp: remoteAnswer
+}));
+//end of new changes 
+            } else if (message.type === 'error') {
+                console.error(`[Client] ❌ Server Error: ${message.message}`);
                
         }
     });
@@ -140,6 +160,11 @@
 
                 peerConnections[remoteClientId] = peerConnection;
             }
+            //new changes 
+
+
+
+            //end of new changes 
 
             setTimeout(() => {
                 console.log("[Client] 🔄 Pulling tracks from Calls API...");
@@ -149,16 +174,18 @@
                     return;
                 }
 
-                const tracksToPull = transceivers.map(({ sender }) => ({
-                    location: "remote",
-                    trackName: sender.track?.id || "unknown",
-                    sessionId: sessionId 
-                }));
+                
+                const trackData = message?.trackData?.tracks?.map(track => ({
+                          location: "remote",
+                          trackName: track?.trackName || "unknown",
+                         sessionId: remoteSessionId,
+                             }));
+                console.log(trackData);
 
                 ws.send(JSON.stringify({
                     type: "pullTracks",
-                    sessionId: sessionId,
-                    body: { tracks: tracksToPull }
+                    sessionId: remoteSessionId,
+                    body: { tracks: trackData }
                 }));
             }, 1000);
         }

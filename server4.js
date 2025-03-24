@@ -97,7 +97,44 @@ wss.on('connection', ws => {
                 ws.send(JSON.stringify({ type: 'error', message: error.message }));
             }
         }
+    });
+    //new changes
+    ws.on('message', async message => {
+        const parsedMessage = JSON.parse(message);
+        if (parsedMessage.type === 'joinCall2') {
+            clientId = parsedMessage.clientId;
+            roomId = parsedMessage.roomId || "default-room";
+
+            if (!rooms[roomId]) rooms[roomId] = {};
+            
+            try {
+                sessionId = await createCloudflareSession();
+                const trackData = parsedMessage.trackData;
+                rooms[roomId][clientId] = { ws, sessionId, trackData };
+                
+                const addTrackResponse = await addTrackToCloudflareSession(sessionId, trackData);
+                ws.send(JSON.stringify({ type: 'trackAdded2', response: addTrackResponse, sessionId }));
+                
+                for (const remoteClientId in rooms[roomId]) {
+                    if (remoteClientId !== clientId) {
+                        rooms[roomId][remoteClientId].ws.send(JSON.stringify({
+                            type: 'remoteClientConnected', clientId, sessionId, trackData
+                        }));
+                        ws.send(JSON.stringify({
+                            type: 'remoteClientConnected',
+                            clientId: remoteClientId,
+                            sessionId: rooms[roomId][remoteClientId].sessionId,
+                            trackData: rooms[roomId][remoteClientId].trackData
+                        }));
+                    }
+                }
+            } catch (error) {
+                ws.send(JSON.stringify({ type: 'error', message: error.message }));
+            }
+        }
     });     
+    
+    //end of new changes
 
     ws.on('close', () => { if (rooms[roomId] && rooms[roomId][clientId]) delete rooms[roomId][clientId]; });
     ws.on('error', console.error);

@@ -61,6 +61,7 @@ function addTrackToCloudflareSession(sessionId, trackData) {
     });
 }
 
+
 wss.on('connection', ws => {
     let clientId, sessionId, roomId;
 
@@ -107,7 +108,6 @@ wss.on("connection", (ws) => {
     ws.on("message", async (data) => { 
         try {
             const message = JSON.parse(data);
-            console.log("[Server] Received message:");
 
             if (message.type === "pullTracks") {
                 const { sessionId, body } = message;
@@ -158,5 +158,63 @@ wss.on("connection", (ws) => {
         }
     });
 });
+//new changes 
 
+wss.on("connection", (ws) => {
+    ws.on("message", async (data) => { 
+        try {
+            const message = JSON.parse(data);
+            console.log("[Server] Received message:", message);
+
+            if (message.type === "renegotiate") {
+                const { sessionId, body } = message;
+                console.log("[Server] Renegotiating session:", sessionId);
+                console.log("[Server] Received SDP answer:", body.sessionDescription);
+
+                const options = {
+                    method: "PUT",
+                    headers: {
+                        'Authorization': `Bearer ${APP_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionDescription: body.sessionDescription
+                    })
+                };
+
+                console.log("[Server] Sending renegotiation request to API...");
+
+                const req = https.request(`${API_BASE}/sessions/${sessionId}/renegotiate`, options, (res) => {
+                    let responseData = '';
+                    res.on('data', (chunk) => { responseData += chunk; });
+                    res.on('end', () => {
+                        try {
+                            const renegotiateResponse = JSON.parse(responseData);
+                            console.log("[Server] ✅ Renegotiation response received:", renegotiateResponse);
+
+                            // Send response back to client
+                            ws.send(JSON.stringify({ type: "renegotiateResponse", data: renegotiateResponse }));
+                            
+                        } catch (error) {
+                            console.error("[Server] ❌ Error parsing renegotiation response:", error);
+                            ws.send(JSON.stringify({ type: "error", message: "Failed to parse renegotiation response" }));
+                        }
+                    });
+                });
+
+                req.on('error', (error) => {
+                    console.error("[Server] ❌ API Request error:", error);
+                    ws.send(JSON.stringify({ type: "error", message: `API Request error: ${error.message}` }));
+                });
+
+                req.write(JSON.stringify({ sessionDescription: body.sessionDescription }));
+                req.end();
+            }
+        } catch (error) {
+            console.error("[Server] ❌ Error handling message:", error);
+        }
+    });
+});
+
+//end of new changes
 console.log('🚀 WebSocket server started on port 3000');

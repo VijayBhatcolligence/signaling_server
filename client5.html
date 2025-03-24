@@ -49,7 +49,7 @@
                 document.getElementById('localTrackId').textContent = trackId;
                 document.getElementById('localTrackId1').textContent = trackId1;
                 console.log(`[Client] 🔑 Cloudflare session created: ${sessionId}, Track1: ${trackId}, Track2: ${trackId1}`);
-                console.log(message.response.sessionDescription.sdp);
+                
 
             }  if (message.type === 'remoteClientConnected') {
                 handleRemoteClient(message);
@@ -79,17 +79,66 @@
             new RTCSessionDescription(message.data.sessionDescription)
         );
         console.log(`[Client] ✅ Remote Description set`);
+        
     } catch (error) {
         console.error(`[Client] ❌ Error setting remote description:`, error);
     }
     console.log(`[Client] 🔄 Creating answer...`);
     remoteAnswer = await peerConnection.createAnswer();
         console.log("Created remote answer:", remoteAnswer);
+        //new changes
+        // 1️⃣ ICE Candidate Event
+peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+        console.log(`📡 New ICE Candidate:`, event.candidate);
+    } else {
+        console.log("✅ ICE Candidate Gathering Complete");
+    }
+};
+
+// 2️⃣ ICE Connection State Change Event
+peerConnection.oniceconnectionstatechange = () => {
+    console.log(`🔄 ICE Connection State Changed: ${peerConnection.iceConnectionState}`);
+    if (peerConnection.iceConnectionState === "failed") {
+        console.warn("⚠️ ICE Connection Failed. Retrying...");
+        // Add logic to restart ICE if needed
+    }
+};
+
+// 3️⃣ Track Event - Remote Track Received
+peerConnection.ontrack = (event) => {
+    console.log(`📡 Received Remote Track:`, event.track);
+    if (event.streams.length > 0) {
+        const remoteVideo = document.createElement('video');
+        remoteVideo.srcObject = event.streams[0];
+        remoteVideo.autoplay = true;
+        remoteVideo.playsInline = true;
+        document.getElementById("remoteVideos").appendChild(remoteVideo);
+    }
+};
+
+// 4️⃣ Overall Connection State Change Event
+peerConnection.onconnectionstatechange = () => {
+    console.log(`🔄 Connection State Changed: ${peerConnection.connectionState}`);
+    if (peerConnection.connectionState === "connected") {
+        console.log("✅ WebRTC Connection Successfully Established!");
+    }
+};
+        //end of new changes 
 
         ws.send(JSON.stringify({
-    type: "sdpAnswer",
-    sdp: remoteAnswer
+    type: "renegotiate",
+    clientid: sessionId,
+    sessionDescription: {
+        sdp: remoteAnswer.sdp,  // Ensure this contains the correct SDP
+        type: "answer"
+    }
 }));
+
+if(message.type== 'renegotiateResponse'){
+    console.log(message, "renegotiate response");
+    
+}
 //end of new changes 
             } else if (message.type === 'error') {
                 console.error(`[Client] ❌ Server Error: ${message.message}`);
@@ -113,13 +162,19 @@
                 await peerConnection.setLocalDescription(offer);
 
                 const trackData = {
-                    sessionDescription: { type: "offer", sdp: peerConnection.localDescription.sdp },
-                    tracks: transceivers.map(({ mid, sender }) => ({
-                        location: "local",
-                        mid,
-                        trackName: sender.track?.id || `track-${Date.now()}`
-                    }))
-                };
+    sessionDescription: {
+        type: "offer",
+        sdp: peerConnection.localDescription?.sdp || ""
+    },
+    tracks: transceivers.map(({ mid, sender }) => ({
+        location: "local",
+        mid,
+        trackName: sender.track?.id || `track-${Date.now()}`,
+        bidirectionalMediaStream: true, // Default false, update as needed
+        kind: sender.track?.kind || "video" // Either "audio" or "video"
+    }))
+};
+
 
                 console.log(trackData);
 
@@ -145,21 +200,7 @@
 
             console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track1: ${trackName}, Track2: ${trackName1}`);
 
-            if (!peerConnection) {
-                const remoteVideo = document.createElement('video');
-                remoteVideo.id = `video-${remoteClientId}`;
-                remoteVideo.autoplay = true;
-                remoteVideo.playsInline = true;
-                document.getElementById('remoteVideos').appendChild(remoteVideo);
-
-                peerConnection.ontrack = (event) => {
-                    if (event.streams.length > 0) {
-                        remoteVideo.srcObject = event.streams[0];
-                    }
-                };
-
-                peerConnections[remoteClientId] = peerConnection;
-            }
+           
             //new changes 
 
 
@@ -176,10 +217,14 @@
 
                 
                 const trackData = message?.trackData?.tracks?.map(track => ({
-                          location: "remote",
-                          trackName: track?.trackName || "unknown",
-                         sessionId: remoteSessionId,
-                             }));
+    location: "remote",  // Always set to "remote" for received tracks
+    trackName: track?.trackName || "unknown",
+    sessionId: remoteSessionId, // Ensure remoteSessionId is defined
+    mid: track?.mid || `#${track?.trackName}`, // mid associated with transceiver
+    bidirectionalMediaStream: track?.bidirectionalMediaStream || true, // Default to false
+    kind: track?.kind || "video" // Default kind, change if needed
+})) || [];
+
                 console.log(trackData);
 
                 ws.send(JSON.stringify({

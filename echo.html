@@ -175,11 +175,6 @@
       // We're going to modify the remote session and pull these tracks
       // by requesting an offer from the Calls API with the tracks we
       // want to pull.
-      const bodyss ={method: "POST",
-          headers,
-          body: JSON.stringify({
-            tracks: tracksToPull,
-          }),}
       console.log("Pulling tracks from Calls API...");
       const pullResponse = await fetch(
         `${API_BASE}/sessions/${remoteSessionId}/tracks/new`,
@@ -191,7 +186,7 @@
           }),
         },
       ).then((res) => res.json());
-      console.log(bodyss);
+     
     console.log(tracksToPull);
       console.log("Pull response:", pullResponse);
 
@@ -256,6 +251,15 @@
             }),
           },
         ).then((res) => res.json());
+        const now={
+           method: "PUT",
+            headers,
+            body: JSON.stringify({
+              sessionDescription: {
+                sdp: remoteAnswer.sdp,
+                type: "answer"}})
+              }
+              console.log(now);
         console.log("Renegotiate response:", renegotiateResponse);
         if (renegotiateResponse.errorCode) {
           throw new Error(renegotiateResponse.errorDescription);

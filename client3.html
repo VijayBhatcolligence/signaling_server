@@ -121,13 +121,19 @@ if(message.type== 'renegotiateResponse'){
                 await peerConnection.setLocalDescription(offer);
 
                 const trackData = {
-                    sessionDescription: { type: "offer", sdp: peerConnection.localDescription.sdp },
-                    tracks: transceivers.map(({ mid, sender }) => ({
-                        location: "local",
-                        mid,
-                        trackName: sender.track?.id || `track-${Date.now()}`
-                    }))
-                };
+    sessionDescription: {
+        type: "offer",
+        sdp: peerConnection.localDescription?.sdp || ""
+    },
+    tracks: transceivers.map(({ mid, sender }) => ({
+        location: "local",
+        mid,
+        trackName: sender.track?.id || `track-${Date.now()}`,
+        bidirectionalMediaStream: true, // Default false, update as needed
+        kind: sender.track?.kind || "video" // Either "audio" or "video"
+    }))
+};
+
 
                 console.log(trackData);
 
@@ -170,10 +176,14 @@ if(message.type== 'renegotiateResponse'){
 
                 
                 const trackData = message?.trackData?.tracks?.map(track => ({
-                          location: "remote",
-                          trackName: track?.trackName || "unknown",
-                         sessionId: remoteSessionId,
-                             }));
+    location: "remote",  // Always set to "remote" for received tracks
+    trackName: track?.trackName || "unknown",
+    sessionId: remoteSessionId, // Ensure remoteSessionId is defined
+    mid: track?.mid || `#${track?.trackName}`, // mid associated with transceiver
+    bidirectionalMediaStream: track?.bidirectionalMediaStream || true, // Default to false
+    kind: track?.kind || "video" // Default kind, change if needed
+})) || [];
+
                 console.log(trackData);
 
                 ws.send(JSON.stringify({

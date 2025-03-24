@@ -25,8 +25,9 @@
         let transceivers = []; 
         const ROOM_ID = "default-room";
         const peerConnection = new RTCPeerConnection({
-            iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-        });
+                    iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+                });
+        
 
         ws.addEventListener('open', () => {
             console.log('[Client] ✅ WebSocket connected');
@@ -48,65 +49,71 @@
                 document.getElementById('localTrackId').textContent = trackId;
                 document.getElementById('localTrackId1').textContent = trackId1;
                 console.log(`[Client] 🔑 Cloudflare session created: ${sessionId}, Track1: ${trackId}, Track2: ${trackId1}`);
+                
 
-            }  
-
-            if (message.type === 'remoteClientConnected') {
+            }  if (message.type === 'remoteClientConnected') {
                 handleRemoteClient(message);
-            } 
 
+            } 
+ 
+    
             if (message.type === 'trackAdded') {
-                console.log(peerConnection);
-                console.log("Local tracks being sent:", peerConnection.getSenders().map(s => s.track));
-
+        console.log(peerConnection);
+        console.log(`[Client] 🔗 Created PeerConnection for ${clientId}`);
                 console.log(`[Client] 🔄 Received Answer from SFU, setting remote description...`);
-
                 try {
-                    await peerConnection.setRemoteDescription(
-                        new RTCSessionDescription(message.response.sessionDescription)
-                    );
-                    console.log(`[Client] ✅ Remote Description set`);
-                    
-                    checkSFUUsage(peerConnection); // Check if SFU is used
-                     // Check outbound track stats
-                } catch (error) {
-                    console.error(` ❌ Error setting remote description:`, error);
-                }
-            } 
-            
-            if (message.type === 'pullTracksResponse') {
+        await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(message.response.sessionDescription)
+        );
+        console.log(`[Client] ✅ Remote Description set`);
+    } catch (error) {
+        console.error(`[Client] ❌ Error setting remote description:`, error);
+    }
+
+            } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
-
+                console.log(`[Client] 🔄 Received offer from client b, setting remote description...`);
+                //new changes 
                 try {
-                    await peerConnection.setRemoteDescription(
-                        new RTCSessionDescription(message.data.sessionDescription)
-                    );
-                    console.log(`[Client] ✅ Remote Description set`);
+        await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(message.data.sessionDescription)
+        );
+        console.log(`[Client] ✅ Remote Description set`);
+        
+    } catch (error) {
+        console.error(`[Client] ❌ Error setting remote description:`, error);
+    }
+    console.log(`[Client] 🔄 Creating answer...`);
+    remoteAnswer = await peerConnection.createAnswer();
+        console.log("Created remote answer:", remoteAnswer);
 
-                    console.log(`[Client] 🔄 Creating answer...`);
-                    remoteAnswer = await peerConnection.createAnswer();
-                    console.log("Created remote answer:", remoteAnswer);
+        ws.send(JSON.stringify({
+    type: "renegotiate",
+    clientid: sessionId,
+    sessionDescription: {
+        sdp: remoteAnswer.sdp,  // Ensure this contains the correct SDP
+        type: "answer"
+    }
+}));
 
-                    ws.send(JSON.stringify({
-                        type: "renegotiate",
-                        clientid: sessionId,
-                        sessionDescription: {
-                            sdp: remoteAnswer.sdp, 
-                            type: "answer"
-                        }
-                    }));
-
-                } catch (error) {
-                    console.error(`[Client] ❌ Error setting remote description:`, error);
-                }
-            }
-        });
+if(message.type== 'renegotiateResponse'){
+    console.log(message, "renegotiate response");
+    
+}
+//end of new changes 
+            } else if (message.type === 'error') {
+                console.error(`[Client] ❌ Server Error: ${message.message}`);
+               
+        }
+    });
 
         async function startWebRTC() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                 document.getElementById('localVideo').srcObject = stream;
                 console.log(`[Client] 🎥 Local stream active.`, stream);
+                
+    
 
                 transceivers = stream.getTracks().map(track =>
                     peerConnection.addTransceiver(track, { direction: "sendrecv" })
@@ -116,13 +123,21 @@
                 await peerConnection.setLocalDescription(offer);
 
                 const trackData = {
-                    sessionDescription: { type: "offer", sdp: peerConnection.localDescription.sdp },
-                    tracks: transceivers.map(({ mid, sender }) => ({
-                        location: "local",
-                        mid,
-                        trackName: sender.track?.id || `track-${Date.now()}`
-                    }))
-                };
+    sessionDescription: {
+        type: "offer",
+        sdp: peerConnection.localDescription?.sdp || ""
+    },
+    tracks: transceivers.map(({ mid, sender }) => ({
+        location: "local",
+        mid,
+        trackName: sender.track?.id || `track-${Date.now()}`,
+        bidirectionalMediaStream: true, // Default false, update as needed
+        kind: sender.track?.kind || "video" // Either "audio" or "video"
+    }))
+};
+
+
+                console.log(trackData);
 
                 ws.send(JSON.stringify({
                     type: 'joinCall',
@@ -137,7 +152,21 @@
         }
 
         function handleRemoteClient(message) {
-            console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${message.clientId}`);
+            const remoteClientId = message.clientId;
+            const remoteSessionId = message.sessionId;
+            const trackName = message.trackData.tracks[0]?.trackName || "N/A";
+            const trackName1 = message.trackData.tracks[1]?.trackName || "N/A";
+            const trackNames = message.trackData.tracks.map(track => track.trackName || "N/A");
+
+
+            console.log(`[Client] 🧑‍🤝‍🧑 New Remote Client: ${remoteClientId}, Session: ${remoteSessionId}, Track1: ${trackName}, Track2: ${trackName1}`);
+
+           
+            //new changes 
+
+
+
+            //end of new changes 
 
             setTimeout(() => {
                 console.log("[Client] 🔄 Pulling tracks from Calls API...");
@@ -147,10 +176,22 @@
                     return;
                 }
 
+                
+                const trackData = message?.trackData?.tracks?.map(track => ({
+    location: "remote",  // Always set to "remote" for received tracks
+    trackName: track?.trackName || "unknown",
+    sessionId: remoteSessionId, // Ensure remoteSessionId is defined
+    mid: track?.mid || `#${track?.trackName}`, // mid associated with transceiver
+    bidirectionalMediaStream: track?.bidirectionalMediaStream || true, // Default to false
+    kind: track?.kind || "video" // Default kind, change if needed
+})) || [];
+
+                console.log(trackData);
+
                 ws.send(JSON.stringify({
                     type: "pullTracks",
-                    sessionId: message.sessionId,
-                    body: { tracks: message.trackData.tracks }
+                    sessionId: remoteSessionId,
+                    body: { tracks: trackData }
                 }));
             }, 1000);
         }
@@ -158,59 +199,6 @@
         function generateClientId() {
             return Math.random().toString(36).substring(2, 15);
         }
-
-        // Function to check if SFU is used
-        async function checkSFUUsage(peerConnection) {
-            const stats = await peerConnection.getStats();
-            let isUsingSFU = false;
-
-            stats.forEach(report => {
-                if (report.type === "candidate-pair" && report.state === "succeeded") {
-                    if (report.relayProtocol) {
-                        console.log(`🟠 SFU Detected! Media is relayed via: ${report.relayProtocol}`);
-                        isUsingSFU = true;
-                    } else {
-                        console.log("🟢 Direct P2P connection, SFU not involved.");
-                    }
-                }
-            });
-
-            return isUsingSFU;
-        }
-
-        // Function to check outbound track stats
-        function startOutboundStatsMonitoring(peerConnection) {
-    setInterval(async () => {
-        const stats = await peerConnection.getStats();
-        stats.forEach(report => {
-            if (report.type === "outbound-rtp" && report.kind === "video") {
-                console.log(`🟢 Outbound Video - Packets Sent: ${report.packetsSent}, Bytes Sent: ${report.bytesSent}`);
-            }
-            if (report.type === "outbound-rtp" && report.kind === "audio") {
-                console.log(`🟢 Outbound Audio - Packets Sent: ${report.packetsSent}, Bytes Sent: ${report.bytesSent}`);
-            }
-        });
-    }, 100000); // Updates stats every second
-}
-
-// Call this function after peer connection is established
-peerConnection.oniceconnectionstatechange = () => {
-    if (peerConnection.iceConnectionState === "connected") {
-        console.log("[Client] ✅ PeerConnection established. Monitoring outbound track stats...");
-        startOutboundStatsMonitoring(peerConnection);
-    }
-};
-
-
-        // Listen for remote tracks
-        peerConnection.ontrack = (event) => {
-            console.log(`📡 Received remote track:`, event.track);
-            const remoteVideo = document.createElement('video');
-            remoteVideo.srcObject = event.streams[0];
-            remoteVideo.autoplay = true;
-            remoteVideo.playsInline = true;
-            document.getElementById("remoteVideos").appendChild(remoteVideo);
-        };
     </script>
 </body>
 </html>

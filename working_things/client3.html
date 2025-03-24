@@ -38,7 +38,7 @@
 
         ws.addEventListener('message', async (event) => {
             const message = JSON.parse(event.data);
-            console.log(`[Client] ⬇️ Received: ${message.type}`, message);
+            
 
             if (message.type === 'trackAdded') {
                 sessionId = message.sessionId;
@@ -72,10 +72,47 @@
 
             } else if (message.type === 'pullTracksResponse') {
                 console.log("[Client] 📡 Tracks pulled successfully:", message.data);
+                //new chnges
+                try {
+                    await peerConnection.setRemoteDescription(
+                        new RTCSessionDescription(message.data.sessionDescription)
+                    );
+                    console.log(`[Client] ✅ Remote Description set`);
+                    
 
-            } else if (message.type === 'error') {
+
+                    console.log(`[Client] 🔄 Creating answer...`);
+                    remoteAnswer = await peerConnection.createAnswer();
+                    console.log("Created remote answer:", remoteAnswer);
+
+                    
+
+                    ws.send(JSON.stringify({
+                        type: "renegotiate",
+                        clientid: sessionId,
+                        sessionDescription: {
+                            sdp: remoteAnswer.sdp, 
+                            type: "answer"
+                        }
+                    }));
+
+                } catch (error) {
+                    console.error(`[Client] ❌ Error setting remote description:`, error);
+                }
+
+                
+
+            }
+            
+                //end of changes
+              else if (message.type === 'error') {
                 console.error(`[Client] ❌ Server Error: ${message.message}`);
             }
+            if(message.type== 'renegotiateResponse'){
+                console.log(message, "renegotiate response");
+            
+            }
+               
         });
 
         async function startWebRTC() {

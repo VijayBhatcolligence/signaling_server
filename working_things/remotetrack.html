@@ -4,6 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloudflare WebRTC Multi-User</title>
+    <style>
+        /* Basic styling for the controls */
+        .call-controls {
+            display: flex;
+            justify-content: center;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .call-control-button {
+            padding: 8px 12px;
+            margin: 0 5px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            background-color: #ddd;
+        }
+
+        .call-control-button:hover {
+            background-color: #ccc;
+        }
+
+        .call-control-button:disabled {
+            background-color: #eee;
+            cursor: not-allowed;
+            color: #999;
+        }
+    </style>
 </head>
 <body>
     <h1>Cloudflare WebRTC Multi-User Video Call</h1>
@@ -14,6 +44,13 @@
     <p>Session ID: <span id="localSessionId"></span></p>
     <p>Track ID 1: <span id="localTrackId"></span></p>
     <p>Track ID 2: <span id="localTrackId1"></span></p>
+
+    <!-- Call Controls -->
+    <div class="call-controls">
+        <button class="call-control-button" id="toggleAudio">Toggle Audio</button>
+        <button class="call-control-button" id="toggleVideo">Toggle Video</button>
+        <button class="call-control-button" id="hangUp">Hang Up</button>
+    </div>
 
     <h2>Remote Videos</h2>
     <div id="remoteVideos"></div>
@@ -26,15 +63,14 @@
         const ROOM_ID = "default-room";
         let remoteAnswer = "";  // Store remote answer for debugging
         let isIceGatheringComplete = false; // Track ICE gathering status
+        let localStream; // Store the local stream
+
         const peerConnection = new RTCPeerConnection({
             iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
         });
 
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log(`[Client] ❄️ ICE Candidate:`, event.candidate);
-                // Send ICE candidate to the server (if needed) - Important for SFU!
-                // ws.send(JSON.stringify({type: 'iceCandidate', candidate: event.candidate, sessionId: sessionId})); // Example
             }
         };
 
@@ -157,47 +193,18 @@
             if (message.type == 'renegotiateResponse') {
                 console.log(message, "renegotiate response");
             }
-            async function monitorStats(peerConnection) {
-                setInterval(async () => {
-                    if (!peerConnection) return;
-
-                    const stats = await peerConnection.getStats();
-                    let videoStats, audioStats;
-
-                    stats.forEach(report => {
-                        if (report.type === "inbound-rtp" && report.kind === "video") {
-                            videoStats = report;
-                        } else if (report.type === "inbound-rtp" && report.kind === "audio") {
-                            audioStats = report;
-                        }
-                    });
-
-                    if (videoStats) {
-                        console.log(`[Stats] 📡 Video: ${videoStats.bytesReceived} bytes, ${videoStats.framesDecoded} frames, ${videoStats.packetsLost} lost`);
-                    }
-                    if (audioStats) {
-                        console.log(`[Stats] 🎤 Audio: ${audioStats.bytesReceived} bytes, ${audioStats.packetsLost} lost`);
-                    }
-                }, 2000);  // Runs every 2 seconds
-            }
-
-            // Call this function after setting remote description
-            monitorStats(peerConnection);
-
-
-
 
         });
 
         async function startWebRTC() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                document.getElementById('localVideo').srcObject = stream;
-                console.log(`[Client] 🎥 Local stream active.`, stream);
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true }); // Assign to global variable
+                document.getElementById('localVideo').srcObject = localStream;
+                console.log(`[Client] 🎥 Local stream active.`, localStream);
 
 
 
-                transceivers = stream.getTracks().map(track =>
+                transceivers = localStream.getTracks().map(track =>
                     peerConnection.addTransceiver(track, { direction: "sendrecv" })
                 );
 
@@ -264,6 +271,59 @@
             return Math.random().toString(36).substring(2, 15);
         }
 
+        // Call Control Functions
+        function toggleAudio() {
+            if (!localStream) return;
+            const audioTrack = localStream.getAudioTracks()[0];
+            if (audioTrack) {
+                audioTrack.enabled = !audioTrack.enabled;
+                console.log(`[Client] 🎤 Audio ${audioTrack.enabled ? 'enabled' : 'disabled'}`);
+            }
+        }
+
+        function toggleVideo() {
+            if (!localStream) return;
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = !videoTrack.enabled;
+                console.log(`[Client] 🎥 Video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
+                document.getElementById('localVideo').style.display = videoTrack.enabled ? 'block' : 'none';
+            }
+        }
+
+        function hangUp() {
+            console.log("[Client] 📞 Hanging up call");
+
+            // Disable call control buttons
+            document.getElementById('toggleAudio').disabled = true;
+            document.getElementById('toggleVideo').disabled = true;
+            document.getElementById('hangUp').disabled = true;
+
+            // Stop local stream
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                document.getElementById('localVideo').srcObject = null;
+            }
+
+            // Close peer connection
+            if (peerConnection) {
+                peerConnection.close();
+            }
+
+            // Clean up remote videos
+            const remoteVideos = document.getElementById('remoteVideos');
+            while (remoteVideos.firstChild) {
+                remoteVideos.removeChild(remoteVideos.firstChild);
+            }
+
+            // Optionally, notify the server to end the session
+            ws.send(JSON.stringify({ type: 'hangUp', sessionId: sessionId, clientId: clientId }));
+        }
+
+        // Event Listeners for Call Controls
+        document.getElementById('toggleAudio').addEventListener('click', toggleAudio);
+        document.getElementById('toggleVideo').addEventListener('click', toggleVideo);
+        document.getElementById('hangUp').addEventListener('click', hangUp);
 
     </script>
 </body>

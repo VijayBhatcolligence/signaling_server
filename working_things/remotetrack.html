@@ -5,33 +5,93 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloudflare WebRTC Multi-User</title>
     <style>
-        /* Basic styling for the controls */
+        /* General Styles */
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+        }
+
+        h1, h2 {
+            color: #333;
+            text-align: center;
+        }
+
+        /* Local Video Styles */
+        #localVideo {
+            width: 320px;
+            height: 240px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Call Controls Styles */
         .call-controls {
             display: flex;
             justify-content: center;
-            padding: 10px;
-            background-color: #f0f0f0;
-            border-radius: 5px;
-            margin-top: 10px;
+            padding: 15px;
+            background-color: #e9ecef;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
 
         .call-control-button {
-            padding: 8px 12px;
-            margin: 0 5px;
+            padding: 10px 15px;
+            margin: 0 10px;
             border: none;
-            border-radius: 3px;
+            border-radius: 5px;
             cursor: pointer;
-            background-color: #ddd;
+            background-color: #007bff;
+            color: white;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
 
         .call-control-button:hover {
-            background-color: #ccc;
+            background-color: #0056b3;
         }
 
         .call-control-button:disabled {
-            background-color: #eee;
+            background-color: #ccc;
             cursor: not-allowed;
-            color: #999;
+            color: #666;
+            box-shadow: none;
+        }
+
+        /* Remote Videos Styles */
+        #remoteVideos {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        #remoteVideos video {
+            width: 320px;
+            height: 240px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            margin: 10px;
+            object-fit: cover; /* Prevents distortion */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            animation: fadeIn 0.5s ease;
+        }
+
+        /* Fade-in animation */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 </head>
@@ -71,6 +131,7 @@
 
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
+                console.log(`[Client] ❄️ ICE Candidate:`, event.candidate);
             }
         };
 
@@ -89,23 +150,51 @@
                 isIceGatheringComplete = true;
             }
         };
+
+        const remoteStreams = new Map(); // Store streamId: video element
+
         peerConnection.ontrack = (event) => {
             console.log(`[Client] 📡 Received remote track:`, event.track);
+            const stream = event.streams[0]; // Get the MediaStream
+            if (!stream) {
+                console.warn("[Client] ⚠️ No stream found for track.");
+                return; // Exit if no stream
+            }
 
-            // Ensure remoteVideo element exists
-            let remoteVideo = document.getElementById(`video-${event.track.id}`);
+            const streamId = stream.id; // Use stream ID as the key
+
+            // Check if a video element already exists for this stream
+            let remoteVideo = remoteStreams.get(streamId);
+
             if (!remoteVideo) {
+                // Create a new video element if it doesn't exist
                 remoteVideo = document.createElement('video');
-                remoteVideo.id = `video-${event.track.id}`;
+                remoteVideo.id = `video-${streamId}`; // Use streamId in the ID
                 remoteVideo.autoplay = true;
                 remoteVideo.playsInline = true;
+                if(event.track.kind="audio"){
+                    remoteVideo.style.display="none";
+                }
                 document.getElementById('remoteVideos').appendChild(remoteVideo);
+
+                // Apply fade-in animation
+                remoteVideo.classList.add('fade-in');
+
+                // Store the video element in the map
+                remoteStreams.set(streamId, remoteVideo);
             }
 
-            if (event.streams.length > 0) {
-                remoteVideo.srcObject = event.streams[0];
-                console.log(`[Client] ✅ Remote video updated for track: ${event.track.id}`);
-            }
+            // Set the srcObject to the stream (only set once)
+            remoteVideo.srcObject = stream; // Ensure srcObject is assigned
+
+            console.log(`[Client] ✅ Remote video updated for stream: ${streamId}`);
+
+
+            remoteVideo.addEventListener('loadedmetadata', () => {
+                remoteVideo.play().catch(error => {
+                    console.error("Playback failed:", error);
+                });
+            });
         };
 
 

@@ -226,7 +226,7 @@ wss.on("connection", (ws) => {
                             }));
                         }, delay);
                 
-                        delay += 5000; // Increase delay by 5 seconds for the next iteration
+                        delay += 800; // Increase delay by 5 seconds for the next iteration
                     }
                 }
                 

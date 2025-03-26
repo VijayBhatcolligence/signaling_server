@@ -80,61 +80,12 @@ wss.on('connection', ws => {
                 const addTrackResponse = await addTrackToCloudflareSession(sessionId, trackData);
                 ws.send(JSON.stringify({ type: 'trackAdded', response: addTrackResponse, sessionId }));
                 
-                for (const remoteClientId in rooms[roomId]) {
-                    if (remoteClientId !== clientId) {
-                        rooms[roomId][remoteClientId].ws.send(JSON.stringify({
-                            type: 'remoteClientConnected', clientId, sessionId, trackData
-                        }));
-                        ws.send(JSON.stringify({
-                            type: 'remoteClientConnected',
-                            clientId: remoteClientId,
-                            sessionId: rooms[roomId][remoteClientId].sessionId,
-                            trackData: rooms[roomId][remoteClientId].trackData
-                        }));
-                    }
-                }
             } catch (error) {
                 ws.send(JSON.stringify({ type: 'error', message: error.message }));
             }
         }
     });
-    //new changes
-    ws.on('message', async message => {
-        const parsedMessage = JSON.parse(message);
-        if (parsedMessage.type === 'joinCall2') {
-            clientId = parsedMessage.clientId;
-            roomId = parsedMessage.roomId || "default-room";
-
-            if (!rooms[roomId]) rooms[roomId] = {};
-            
-            try {
-                sessionId = await createCloudflareSession();
-                const trackData = parsedMessage.trackData;
-                rooms[roomId][clientId] = { ws, sessionId, trackData };
-                
-                const addTrackResponse = await addTrackToCloudflareSession(sessionId, trackData);
-                ws.send(JSON.stringify({ type: 'trackAdded2', response: addTrackResponse, sessionId }));
-                
-                for (const remoteClientId in rooms[roomId]) {
-                    if (remoteClientId !== clientId) {
-                        rooms[roomId][remoteClientId].ws.send(JSON.stringify({
-                            type: 'remoteClientConnected', clientId, sessionId, trackData
-                        }));
-                        ws.send(JSON.stringify({
-                            type: 'remoteClientConnected',
-                            clientId: remoteClientId,
-                            sessionId: rooms[roomId][remoteClientId].sessionId,
-                            trackData: rooms[roomId][remoteClientId].trackData
-                        }));
-                    }
-                }
-            } catch (error) {
-                ws.send(JSON.stringify({ type: 'error', message: error.message }));
-            }
-        }
-    });     
     
-    //end of new changes
 
     ws.on('close', () => { if (rooms[roomId] && rooms[roomId][clientId]) delete rooms[roomId][clientId]; });
     ws.on('error', console.error);
@@ -194,7 +145,7 @@ wss.on("connection", (ws) => {
         }
     });
 });
-//*******************************************************************************************new changes
+
 wss.on("connection", (ws) => {
     ws.on("message", async (data) => {
         try {
@@ -227,6 +178,62 @@ wss.on("connection", (ws) => {
             }
         } catch (error) {
             console.error("Error handling renegotiation:", error);
+        }
+    });
+});
+//*******************************************************************************************new changes
+
+ // Store rooms and their connected clients
+
+wss.on("connection", (ws) => {
+    ws.on("message", (data) => {
+        try {
+            const message = JSON.parse(data);
+
+            if (message.type === "clientConnected") {
+                const { clientId, sessionId, roomId, trackData } = message;
+
+                if (!rooms[roomId]) {
+                    rooms[roomId] = {};
+                }
+                
+                // Store client WebSocket and session info
+                rooms[roomId][clientId] = { ws, sessionId, trackData };
+
+                console.log(`[Server] Client ${clientId} joined room ${roomId}`);
+
+                // Notify all other clients in the room about the new client
+                // Notify all other clients in the room about the new client
+                let delay = 0; // Initialize delay counter
+
+                for (const remoteClientId in rooms[roomId]) {
+                    if (remoteClientId !== clientId) {
+                        setTimeout(() => {
+                            // Notify existing clients about the new client
+                            rooms[roomId][remoteClientId].ws.send(JSON.stringify({
+                                type: 'remoteClientConnected',
+                                clientId,
+                                sessionId,
+                                trackData
+                            }));
+                
+                            // Notify the new client about existing clients
+                            ws.send(JSON.stringify({
+                                type: 'remoteClientConnected',
+                                clientId: remoteClientId,
+                                sessionId: rooms[roomId][remoteClientId].sessionId,
+                                trackData: rooms[roomId][remoteClientId].trackData
+                            }));
+                        }, delay);
+                
+                        delay += 5000; // Increase delay by 5 seconds for the next iteration
+                    }
+                }
+                
+
+            }
+        } catch (error) {
+            console.error("[Server] ❌ Error handling message:", error);
         }
     });
 });

@@ -1,5 +1,4 @@
 const https = require('https');
-const { console } = require('inspector');
 const WebSocket = require('ws');
 
 const wss = new WebSocket.Server({ port: 3000 });
@@ -32,6 +31,7 @@ function createCloudflareSession() {
     });
 }
 
+
 function addTrackToCloudflareSession(sessionId, trackData) {
     return new Promise((resolve, reject) => {
         const options = {
@@ -41,19 +41,22 @@ function addTrackToCloudflareSession(sessionId, trackData) {
                 'Content-Type': 'application/json',
             },
         };
-        
+
         const req = https.request(`${API_BASE}/sessions/${sessionId}/tracks/new`, options, (res) => {
             let data = '';
             res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => {
                 try {
                     const parsedData = JSON.parse(data);
+                    console.log("[Server] Cloudflare Answer SDP reached");
+                    console.log("set description done nad cloudflare is receveing my audio and veio")
                     res.statusCode < 300 ? resolve(parsedData) : reject(new Error(parsedData.errorDescription));
                 } catch (error) { reject(error); }
             });
         });
         req.on('error', reject);
         req.write(JSON.stringify(trackData));
+        console.log("[Server] Offer sent to Cloudflare");
         req.end();
     });
 }
@@ -63,71 +66,81 @@ wss.on('connection', ws => {
 
     ws.on('message', async message => {
         const parsedMessage = JSON.parse(message);
-        if (parsedMessage.type === 'joinCall') {
-            clientId = parsedMessage.clientId;
-            roomId = parsedMessage.roomId || "default-room";
+        const type = parsedMessage.type; // Extract message type
 
-            if (!rooms[roomId]) rooms[roomId] = {};
-            
-            try {
-                sessionId = await createCloudflareSession();
-                const trackData = parsedMessage.trackData;
-                rooms[roomId][clientId] = { ws, sessionId, trackData };
-                
-                const addTrackResponse = await addTrackToCloudflareSession(sessionId, trackData);
-                ws.send(JSON.stringify({ type: 'trackAdded', response: addTrackResponse, sessionId }));
+        switch (type) {
+            case 'joinCall':
+                clientId = parsedMessage.clientId;
+                roomId = parsedMessage.roomId || "default-room";
 
-                // Notify existing clients about the new user
-                for (const remoteClientId in rooms[roomId]) {
-                    if (remoteClientId !== clientId) {
-                        rooms[roomId][remoteClientId].ws.send(JSON.stringify({
-                            type: 'remoteClientConnected', 
-                            clientId, 
-                            sessionId, 
-                            trackData
-                        }));
+                if (!rooms[roomId]) rooms[roomId] = {};
 
-                        ws.send(JSON.stringify({
-                            type: 'pullRemoteTrack',
-                            clientId: remoteClientId,
-                            sessionId: rooms[roomId][remoteClientId].sessionId,
-                            trackData: rooms[roomId][remoteClientId].trackData
-                        }));
+                try {
+                    sessionId = await createCloudflareSession(); // create cloudflare session
+                    console.log(`Client ${clientId} created Cloudflare session ${sessionId}`);
+
+                    const trackData = parsedMessage.trackData;
+                    rooms[roomId][clientId] = { ws, sessionId, trackData };
+
+                    const addTrackResponse = await addTrackToCloudflareSession(sessionId, trackData); // add track to cloudflare seesion
+                    ws.send(JSON.stringify({ type: 'trackAdded', response: addTrackResponse, sessionId }));// send trackadded to client
+
+                    // Notify existing clients about the new client
+                    for (const remoteClientId in rooms[roomId]) {
+                        if (remoteClientId !== clientId) {
+                            const remoteClient = rooms[roomId][remoteClientId].ws;
+                            remoteClient.send(JSON.stringify({
+                                type: 'remoteClientConnected',
+                                clientId: clientId
+                            }));
+
+                            // Notify the new client about existing clients
+                            ws.send(JSON.stringify({
+                                type: 'remoteClientConnected',
+                                clientId: remoteClientId
+                            }));
+                        }
                     }
+                } catch (error) {
+                    console.error("Error during joinCall:", error);
+                    ws.send(JSON.stringify({ type: 'error', message: error.message }));
                 }
-            } catch (error) {
-                ws.send(JSON.stringify({ type: 'error', message: error.message }));
-            }
-        }
-    });
-    ws.on("message", async (data) => { 
-        
-        const message = JSON.parse(data);
-        const { sessionId, body } = message;
-        console.log("Message:", message.sessionId);
-        
-        if (message.type === "pullTracks") {
-            const { sessionId, body } = message;
-    
-            const pullResponse = await fetch(
-                `${API_BASE}/sessions/${sessionId}/tracks/new`,
-                {
-                    method: "POST",
-                    headers: { 
-                        'Authorization': `Bearer ${APP_TOKEN}`,
-                        'Content-Type': 'application/json'  // Ensure correct content type
-                    },
-                    body: JSON.stringify(body) // Convert body to JSON string
+                break;
+            case 'offer':
+            case 'answer':
+            case 'iceCandidate':
+                // Route offer, answer, and iceCandidate messages to the specified remote client
+                const remoteClientId = parsedMessage.remoteClientId;
+                if (!remoteClientId) {
+                    console.warn(`[Server] Missing remoteClientId in ${type} message.`);
+                    return;
                 }
-            ).then(res => res.json());
-    
-            console.log("Pull response:", pullResponse);
-        }
-    });
-    
-    
+                if (!rooms[roomId] || !rooms[roomId][remoteClientId]) {
+                    console.warn(`[Server] Client ${remoteClientId} not found in room ${roomId} for ${type} message.`);
+                    return;
+                }
 
-    ws.on('close', () => { if (rooms[roomId] && rooms[roomId][clientId]) delete rooms[roomId][clientId]; });
+                const targetClient = rooms[roomId][remoteClientId].ws;
+                if (targetClient && targetClient.readyState === WebSocket.OPEN) {
+                    targetClient.send(JSON.stringify(parsedMessage)); // Forward the message
+                    console.log(`[Server] Forwarded ${type} from ${clientId} to ${remoteClientId}`);
+                } else {
+                    console.log(`[Server] Target client ${remoteClientId} not found or not connected for ${type} message.`);
+                }
+                break;
+
+            default:
+                console.log(`[Server] Received unknown message type: ${type}`);
+        }
+    });
+
+    ws.on('close', () => {
+        if (rooms[roomId] && rooms[roomId][clientId]) {
+            delete rooms[roomId][clientId];
+            console.log(`Client ${clientId} disconnected from room ${roomId}`);
+        }
+    });
+
     ws.on('error', console.error);
 });
 
